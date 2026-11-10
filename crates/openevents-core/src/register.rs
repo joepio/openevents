@@ -1,9 +1,11 @@
-//! The register: log, idempotency, JSON Commit, projections, rules and reads.
+//! The register: log, idempotency, commits, actions, rules and reads.
 //!
 //! OpenEvents is the read side of a CQRS architecture (docs/architectuur.md). Writes
 //! are facts; the register only checks what keeps the log trustworthy: the schema,
-//! the write rule of the profile, idempotency and `previousCommit`.
+//! the action and its rule, idempotency and `previousCommit`. Every event is a commit
+//! (ADR-0008); the state of a resource is its commits applied in order.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
@@ -11,9 +13,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::{broadcast, Mutex};
 
-use crate::cql2::{self, ActorContext, Expr};
+use crate::cql2::{self, ActorContext, Expr, Refs};
 use crate::kv::{prefix_end, KvError, KvStore, Op};
-use crate::profile::{self, Profile, Right, SubjectType, TemplateContext};
+use crate::profile::{self, Action, CommitOp, CommitSpec, Profile, SubjectType};
 
 pub const TYPE_COMMIT: &str = "json.commit";
 pub const TYPE_TRANSACTION: &str = "json.commit.transaction";
@@ -189,7 +191,7 @@ const K_SEQ: &[u8] = b"meta/seq";
 struct Profiles {
     by_id: HashMap<String, Arc<Profile>>,
     type_owner: HashMap<String, String>,
-    event_owner: HashMap<String, String>,
+    action_owner: HashMap<String, String>,
 }
 
 impl Profiles {
@@ -198,8 +200,8 @@ impl Profiles {
         let p = self.by_id.get(pid)?.clone();
         Some((p, name))
     }
-    fn event_type(&self, name: &str) -> Option<Arc<Profile>> {
-        let pid = self.event_owner.get(name)?;
+    fn action(&self, name: &str) -> Option<Arc<Profile>> {
+        let pid = self.action_owner.get(name)?;
         self.by_id.get(pid).cloned()
     }
 }
@@ -220,14 +222,14 @@ fn parse_json<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T, RegisterE
         .map_err(|e| RegisterError::Storage(KvError(format!("corrupt record: {e}"))))
 }
 
-/// May this actor use this right on a subject in this state?
-fn rule_allows(rule: &Option<Expr>, state: &Value, actor: &Actor) -> bool {
+/// Does this rule hold for this actor on a subject in this state?
+fn rule_allows(rule: &Option<Expr>, state: &Value, actor: &Actor, refs: &dyn Refs) -> bool {
     rule.as_ref()
-        .map(|r| r.eval(state, &actor.ctx()))
+        .map(|r| r.eval_with(state, &actor.ctx(), refs))
         .unwrap_or(false)
 }
 
-fn readable_by(t: &SubjectType, record: &SubjectRecord, actor: &Actor) -> bool {
+fn readable_by(t: &SubjectType, record: &SubjectRecord, actor: &Actor, refs: &dyn Refs) -> bool {
     if actor.admin {
         return true;
     }
@@ -235,21 +237,83 @@ fn readable_by(t: &SubjectType, record: &SubjectRecord, actor: &Actor) -> bool {
         return false;
     }
     let s = &record.state;
-    rule_allows(&t.rules.read, s, actor)
-        || rule_allows(&t.rules.write, s, actor)
-        || rule_allows(&t.rules.append, s, actor)
+    rule_allows(&t.rules.read, s, actor, refs) || rule_allows(&t.rules.write, s, actor, refs)
 }
 
 /// The fields this actor may see of this subject, or `None` for all fields.
-fn visible_fields<'a>(t: &'a SubjectType, state: &Value, actor: &Actor) -> Option<&'a [String]> {
+fn visible_fields<'a>(
+    t: &'a SubjectType,
+    state: &Value,
+    actor: &Actor,
+    refs: &dyn Refs,
+) -> Option<&'a [String]> {
     if actor.admin {
         return None;
     }
     let ctx = actor.ctx();
     t.fields
         .iter()
-        .find(|f| f.when.eval(state, &ctx))
+        .find(|f| f.when.eval_with(state, &ctx, refs))
         .map(|f| f.show.as_slice())
+}
+
+/// References as profile rules see them: every live subject, including the ones
+/// written earlier in the same request.
+struct RuleRefs<'a> {
+    reg: &'a Register,
+    overlay: Option<&'a HashMap<String, Option<SubjectRecord>>>,
+    cache: RefCell<HashMap<String, Option<Value>>>,
+}
+
+impl Refs for RuleRefs<'_> {
+    fn get(&self, subject: &str) -> Option<Value> {
+        if let Some(r) = self.overlay.and_then(|o| o.get(subject)) {
+            return r.as_ref().filter(|r| !r.deleted).map(|r| r.state.clone());
+        }
+        if let Some(v) = self.cache.borrow().get(subject) {
+            return v.clone();
+        }
+        let v = self
+            .reg
+            .load_record(subject)
+            .ok()
+            .flatten()
+            .filter(|r| !r.deleted)
+            .map(|r| r.state);
+        self.cache.borrow_mut().insert(subject.into(), v.clone());
+        v
+    }
+}
+
+/// References as a client filter sees them: only subjects this actor may read, and of
+/// those only the fields it may see. A filter cannot reach further than a GET could.
+struct ReaderRefs<'a> {
+    reg: &'a Register,
+    actor: &'a Actor,
+    cache: RefCell<HashMap<String, Option<Value>>>,
+}
+
+impl Refs for ReaderRefs<'_> {
+    fn get(&self, subject: &str) -> Option<Value> {
+        if let Some(v) = self.cache.borrow().get(subject) {
+            return v.clone();
+        }
+        let v = self.reg.load_record(subject).ok().flatten().and_then(|r| {
+            let ps = self.reg.profiles.read().unwrap();
+            let (p, name) = ps.subject_type(&r.type_name)?;
+            let t = &p.types[name];
+            let rules = self.reg.rule_refs(None);
+            if !readable_by(t, &r, self.actor, &rules) {
+                return None;
+            }
+            Some(match visible_fields(t, &r.state, self.actor, &rules) {
+                Some(show) => pick_fields(&r.state, show),
+                None => r.state,
+            })
+        });
+        self.cache.borrow_mut().insert(subject.into(), v.clone());
+        v
+    }
 }
 
 fn pick_fields(state: &Value, fields: &[String]) -> Value {
@@ -304,13 +368,30 @@ impl Register {
         let stored = reg
             .kv
             .range(b"profile/", &prefix_end(b"profile/"), usize::MAX)?;
-        for (_, v) in stored {
+        for (k, v) in stored {
             let raw: Value = parse_json(&v)?;
-            let p = Profile::compile(raw)
-                .map_err(|e| RegisterError::Storage(KvError(e.to_string())))?;
-            reg.install(p);
+            // A stored profile in an older form (ADR-0008) is skipped, not fatal: put
+            // it again in the new form.
+            match Profile::compile(raw) {
+                Ok(p) => reg.install(p),
+                Err(e) => eprintln!(
+                    "openevents: skipping stored profile {}: {e}",
+                    String::from_utf8_lossy(&k)
+                ),
+            }
         }
         Ok(reg)
+    }
+
+    fn rule_refs<'a>(
+        &'a self,
+        overlay: Option<&'a HashMap<String, Option<SubjectRecord>>>,
+    ) -> RuleRefs<'a> {
+        RuleRefs {
+            reg: self,
+            overlay,
+            cache: RefCell::default(),
+        }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Arc<StoredEvent>> {
@@ -332,15 +413,15 @@ impl Register {
             for t in old.types.keys() {
                 ps.type_owner.remove(t);
             }
-            for e in old.events.keys() {
-                ps.event_owner.remove(e);
+            for e in old.actions.keys() {
+                ps.action_owner.remove(e);
             }
         }
         for t in p.types.keys() {
             ps.type_owner.insert(t.clone(), p.id.clone());
         }
-        for e in p.events.keys() {
-            ps.event_owner.insert(e.clone(), p.id.clone());
+        for e in p.actions.keys() {
+            ps.action_owner.insert(e.clone(), p.id.clone());
         }
         ps.by_id.insert(p.id.clone(), Arc::new(p));
     }
@@ -373,13 +454,13 @@ impl Register {
                     }
                 }
             }
-            for e in p.events.keys() {
-                if let Some(owner) = ps.event_owner.get(e) {
+            for e in p.actions.keys() {
+                if let Some(owner) = ps.action_owner.get(e) {
                     if owner != id {
                         return invalid(
-                            "Event type is owned by another profile.",
+                            "Action is owned by another profile.",
                             vec![ip(
-                                format!("/events/{e}"),
+                                format!("/actions/{e}"),
                                 "taken",
                                 format!("owned by {owner}"),
                             )],
@@ -405,9 +486,9 @@ impl Register {
             .map(|p| p.raw.clone())
     }
 
-    /// Is this event type registered in one of the profiles?
-    pub fn knows_event_type(&self, name: &str) -> bool {
-        self.profiles.read().unwrap().event_type(name).is_some()
+    /// Is this action (event type) registered in one of the profiles?
+    pub fn knows_action(&self, name: &str) -> bool {
+        self.profiles.read().unwrap().action(name).is_some()
     }
 
     pub fn list_profiles(&self) -> Vec<Value> {
@@ -415,7 +496,7 @@ impl Register {
         let mut list: Vec<_> = ps
             .by_id
             .values()
-            .map(|p| json!({ "id": p.id, "version": p.version, "types": p.types.keys().collect::<Vec<_>>(), "events": p.events.keys().collect::<Vec<_>>() }))
+            .map(|p| json!({ "id": p.id, "version": p.version, "types": p.types.keys().collect::<Vec<_>>(), "actions": p.actions.keys().collect::<Vec<_>>() }))
             .collect();
         list.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
         list
@@ -433,7 +514,7 @@ impl Register {
     fn readable(&self, record: &SubjectRecord, actor: &Actor) -> bool {
         let ps = self.profiles.read().unwrap();
         match ps.subject_type(&record.type_name) {
-            Some((p, name)) => readable_by(&p.types[name], record, actor),
+            Some((p, name)) => readable_by(&p.types[name], record, actor, &self.rule_refs(None)),
             None => actor.admin,
         }
     }
@@ -452,9 +533,10 @@ impl Register {
             return Err(RegisterError::NotFound);
         };
         let ps = self.profiles.read().unwrap();
+        let refs = self.rule_refs(None);
         match ps.subject_type(&r.type_name) {
-            Some((p, name)) if readable_by(&p.types[name], &r, actor) => {
-                Ok(r.representation_with(visible_fields(&p.types[name], &r.state, actor)))
+            Some((p, name)) if readable_by(&p.types[name], &r, actor, &refs) => {
+                Ok(r.representation_with(visible_fields(&p.types[name], &r.state, actor, &refs)))
             }
             None if actor.admin => Ok(r.representation()),
             _ => Err(RegisterError::NotFound),
@@ -598,9 +680,10 @@ impl Register {
         Ok(match ps.subject_type(&r.type_name) {
             Some((p, name)) => {
                 let t = &p.types[name];
-                if !readable_by(t, &r, actor) {
+                let refs = self.rule_refs(None);
+                if !readable_by(t, &r, actor, &refs) {
                     Visibility::Hidden
-                } else if visible_fields(t, &r.state, actor).is_some() {
+                } else if visible_fields(t, &r.state, actor, &refs).is_some() {
                     Visibility::Limited
                 } else {
                     Visibility::Full
@@ -653,7 +736,7 @@ impl Register {
                     );
                 }
                 // Filtering on a field you may not see gives the same error as an unknown field.
-                let hidden: Option<&[String]> = visible_fields(t, &json!({}), actor);
+                let hidden: Option<&[String]> = visible_fields(t, &json!({}), actor, &cql2::NoRefs);
                 if let Some(show) = hidden {
                     let bad: Vec<_> = e
                         .properties()
@@ -677,7 +760,7 @@ impl Register {
                     let bad: Vec<_> = e
                         .properties()
                         .into_iter()
-                        .filter(|p| !q.contains(p))
+                        .filter(|p| !q.iter().any(|s| p == s || p.starts_with(&format!("{s}."))))
                         .collect();
                     if !bad.is_empty() {
                         return invalid(
@@ -700,6 +783,12 @@ impl Register {
         }
         let end = prefix_end(&prefix);
         let ctx = actor.ctx();
+        let rules = self.rule_refs(None);
+        let reader = ReaderRefs {
+            reg: self,
+            actor,
+            cache: RefCell::default(),
+        };
         let mut results = Vec::new();
         let mut next = None;
         'scan: loop {
@@ -714,16 +803,16 @@ impl Register {
                 let Some(record) = self.load_record(&subject)? else {
                     continue;
                 };
-                if record.deleted || !readable_by(t, &record, actor) {
+                if record.deleted || !readable_by(t, &record, actor, &rules) {
                     continue;
                 }
-                let allowed = visible_fields(t, &record.state, actor);
+                let allowed = visible_fields(t, &record.state, actor, &rules);
                 if let Some(f) = &filter {
                     // You filter over what you may see: for a limited subject the filter
                     // only sees the shown fields, so it cannot probe hidden ones.
                     let matches = match allowed {
-                        Some(show) => f.eval(&pick_fields(&record.state, show), &ctx),
-                        None => f.eval(&record.state, &ctx),
+                        Some(show) => f.eval_with(&pick_fields(&record.state, show), &ctx, &reader),
+                        None => f.eval_with(&record.state, &ctx, &reader),
                     };
                     if !matches {
                         continue;
@@ -812,72 +901,90 @@ impl Register {
         let mut stale = Vec::new();
         let mut errors = Vec::new();
 
-        if event_type == TYPE_COMMIT || event_type == TYPE_TRANSACTION {
-            let commits: Vec<(String, Value)> = if event_type == TYPE_TRANSACTION {
-                match obj
-                    .get("data")
-                    .and_then(|d| d.get("commits"))
-                    .and_then(|c| c.as_array())
-                {
-                    Some(list) if !list.is_empty() && list.len() <= MAX_COMMITS => list
-                        .iter()
-                        .enumerate()
-                        .map(|(i, c)| (format!("/data/commits/{i}"), c.clone()))
-                        .collect(),
-                    _ => {
-                        return invalid(
-                            "A json.commit.transaction needs 1 to 100 commits in data.commits.",
-                            vec![ip(
-                                "/data/commits",
-                                "required",
-                                "non-empty list, at most 100",
-                            )],
-                        )
-                    }
+        let bare = event_type == TYPE_COMMIT || event_type == TYPE_TRANSACTION;
+        let profile = if bare {
+            None
+        } else {
+            match self.profiles.read().unwrap().action(&event_type) {
+                Some(p) => Some(p),
+                None => {
+                    return invalid(
+                        "Unknown event type.",
+                        vec![ip(
+                            "/type",
+                            "unknown-type",
+                            format!("{event_type} is not an action of a registered profile"),
+                        )],
+                    )
                 }
-            } else {
-                match obj.get("data") {
-                    Some(d) if d.is_object() => vec![("/data".into(), d.clone())],
-                    _ => {
-                        return invalid(
-                            "A json.commit needs a JSONCommit in data.",
-                            vec![ip("/data", "required", "object expected")],
-                        )
-                    }
-                }
-            };
-            let in_tx = event_type == TYPE_TRANSACTION;
-            for (i, (ptr, commit)) in commits.into_iter().enumerate() {
-                let commit_id = if in_tx {
-                    format!("{id}:{i}")
-                } else {
-                    id.clone()
-                };
-                match self.apply_commit(
-                    actor,
-                    &ptr,
-                    &commit,
-                    &commit_id,
-                    &source,
-                    &time,
-                    &mut overlay,
-                )? {
-                    Ok(c) => changes.push(c),
-                    Err(CommitProblem::Invalid(p)) => errors.extend(p),
-                    Err(CommitProblem::Stale(p)) => stale.push(p),
-                    Err(CommitProblem::Forbidden) => return Err(RegisterError::Forbidden),
+            }
+        };
+        let action = profile.as_ref().map(|p| &p.actions[&event_type]);
+        let data = obj.get("data");
+        let list = data.and_then(|d| d.get("commits"));
+        let commits: Vec<(String, Value)> = if event_type == TYPE_TRANSACTION || list.is_some() {
+            match list.and_then(|c| c.as_array()) {
+                Some(list) if !list.is_empty() && list.len() <= MAX_COMMITS => list
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| (format!("/data/commits/{i}"), c.clone()))
+                    .collect(),
+                _ => {
+                    return invalid(
+                        "data.commits needs 1 to 100 commits.",
+                        vec![ip(
+                            "/data/commits",
+                            "required",
+                            "non-empty list, at most 100",
+                        )],
+                    )
                 }
             }
         } else {
-            match self.apply_domain_event(
-                actor,
-                &envelope,
-                &event_type,
-                &subject,
-                &id,
-                &time,
-                &mut overlay,
-            )? {
+            match data {
+                Some(Value::Object(d)) => {
+                    // One commit: it is about the subject of the event.
+                    let mut d = d.clone();
+                    d.entry("resourceId")
+                        .or_insert_with(|| Value::String(subject.clone()));
+                    vec![("/data".into(), Value::Object(d))]
+                }
+                _ => {
+                    return invalid(
+                        "data must be a commit (or hold data.commits).",
+                        vec![ip("/data", "required", "object expected")],
+                    )
+                }
+            }
+        };
+        let many = commits.len() > 1 || event_type == TYPE_TRANSACTION;
+        for (i, (ptr, commit)) in commits.into_iter().enumerate() {
+            let commit_id = if many {
+                format!("{id}:{i}")
+            } else {
+                id.clone()
+            };
+            let mut event = envelope.clone();
+            if let Some(o) = event.as_object_mut() {
+                o.remove("data");
+                if many {
+                    o.insert("transactionid".into(), json!(id));
+                }
+            }
+            event["id"] = json!(commit_id);
+            event["time"] = json!(time);
+            event["actor"] = json!(actor.id);
+            event["datacontenttype"] = json!("application/json");
+            if bare {
+                event["type"] = json!(TYPE_COMMIT);
+            }
+            let ctx = CommitCtx {
+                ptr: &ptr,
+                commit_id: &commit_id,
+                time: &time,
+                action: profile.as_deref().zip(action),
+            };
+            match self.apply_commit(actor, &ctx, &commit, event, &mut overlay)? {
                 Ok(c) => changes.push(c),
                 Err(CommitProblem::Invalid(p)) => errors.extend(p),
                 Err(CommitProblem::Stale(p)) => stale.push(p),
@@ -961,84 +1068,96 @@ impl Register {
         Ok(r)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn check_write(
         &self,
         t: &SubjectType,
         before: Option<&SubjectRecord>,
         after_state: &Value,
-        right: Right,
         actor: &Actor,
+        refs: &dyn Refs,
     ) -> bool {
         if actor.admin {
             return true;
         }
         match before {
-            Some(b) if !b.deleted => {
-                rule_allows(&t.rules.write, &b.state, actor)
-                    || (right == Right::Append && rule_allows(&t.rules.append, &b.state, actor))
-            }
+            Some(b) if !b.deleted => rule_allows(&t.rules.write, &b.state, actor, refs),
             _ => {
                 let r = if t.rules.create.is_some() {
                     &t.rules.create
                 } else {
                     &t.rules.write
                 };
-                rule_allows(r, after_state, actor)
+                rule_allows(r, after_state, actor, refs)
             }
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// Check and apply one commit. With an action, the commit must match one of its
+    /// specs; the spec's `set` is added and its rule (or the type's rules) decides.
+    /// Without one (a bare `json.commit`), the type must allow commits.
     fn apply_commit(
         &self,
         actor: &Actor,
-        ptr: &str,
+        ctx: &CommitCtx,
         commit: &Value,
-        commit_id: &str,
-        source: &str,
-        time: &str,
+        mut event: Value,
         overlay: &mut HashMap<String, Option<SubjectRecord>>,
     ) -> Result<Result<Change, CommitProblem>, RegisterError> {
-        let bad = |code: &str, reason: String| {
-            Ok(Err(CommitProblem::Invalid(vec![ip(ptr, code, reason)])))
+        let ptr = ctx.ptr;
+        let bad = |at: &str, code: &str, reason: String| {
+            Ok(Err(CommitProblem::Invalid(vec![ip(
+                format!("{ptr}{at}"),
+                code,
+                reason,
+            )])))
         };
         let Some(c) = commit.as_object() else {
-            return bad("invalid", "a commit must be an object".into());
+            return bad("", "invalid", "a commit must be an object".into());
         };
         let Some(resource_id) = c
             .get("resourceId")
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
+            .map(String::from)
         else {
-            return bad("required", "resourceId is required".into());
+            return bad("/resourceId", "required", "resourceId is required".into());
         };
-        let resource_data = c.get("resourceData");
-        let patch = c.get("patch");
         let deleted = c.get("deleted").and_then(|v| v.as_bool()) == Some(true);
-        if [resource_data.is_some(), patch.is_some(), deleted]
-            .iter()
-            .filter(|b| **b)
-            .count()
-            != 1
-        {
-            return bad(
-                "one-operation",
-                "a commit needs exactly one of resourceData, patch or deleted: true".into(),
-            );
-        }
-        let before = self.current(resource_id, overlay)?;
-        let live_before = before.as_ref().filter(|b| !b.deleted);
+        let op = match (c.get("resourceData"), c.get("patch"), deleted) {
+            (Some(_), None, false) => CommitOp::Create,
+            (None, Some(_), false) => CommitOp::Update,
+            (None, None, true) => CommitOp::Delete,
+            _ => {
+                return bad(
+                    "",
+                    "one-operation",
+                    "a commit needs exactly one of resourceData, patch or deleted: true".into(),
+                )
+            }
+        };
+        let before = self.current(&resource_id, overlay)?;
+        let live_before = before.as_ref().filter(|b| !b.deleted).cloned();
 
-        // Type: from the stored subject, or from `type` / `schema` for a new one.
+        // Type: from the stored resource, or from `type` / `schema` for a new one. In an
+        // action with one create, the type may be left out.
         let declared = c
             .get("type")
             .or_else(|| c.get("schema"))
-            .and_then(|v| v.as_str());
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .or_else(|| {
+                let (_, a) = ctx.action?;
+                let mut creates = a.commits.iter().filter(|s| s.op == CommitOp::Create);
+                match (creates.next(), creates.next()) {
+                    (Some(s), None) if live_before.is_none() => Some(s.type_name.clone()),
+                    _ => None,
+                }
+            });
         let ps = self.profiles.read().unwrap();
-        let type_name = match (live_before, declared) {
+        let type_name = match (&live_before, &declared) {
             (Some(b), Some(d)) if !type_matches(&b.type_name, d) => {
                 return bad(
+                    "/type",
                     "type-mismatch",
                     format!("{resource_id} is a {}", b.type_name),
                 );
@@ -1046,10 +1165,17 @@ impl Register {
             (Some(b), _) => b.type_name.clone(),
             (None, Some(d)) => match ps.type_owner.keys().find(|t| type_matches(t, d)) {
                 Some(t) => t.clone(),
-                None => return bad("unknown-type", format!("{d} is not a registered type")),
+                None => {
+                    return bad(
+                        "/type",
+                        "unknown-type",
+                        format!("{d} is not a registered type"),
+                    )
+                }
             },
             (None, None) => {
                 return bad(
+                    "/type",
                     "required",
                     "type (or schema) is required for a new resource".into(),
                 )
@@ -1058,15 +1184,96 @@ impl Register {
         let (profile, _) = ps.subject_type(&type_name).expect("type is registered");
         drop(ps);
         let t = &profile.types[&type_name];
-        if !t.allow_commits {
-            return bad(
-                "commits-not-allowed",
-                format!("{type_name} only accepts the event types of its profile"),
-            );
+
+        match (op, &live_before) {
+            (CommitOp::Create, Some(_)) if ctx.action.is_some() => {
+                return bad(
+                    "/resourceId",
+                    "exists",
+                    format!("{resource_id} already exists"),
+                )
+            }
+            (CommitOp::Update | CommitOp::Delete, None) => {
+                return bad(
+                    "/resourceId",
+                    "not-found",
+                    format!("{resource_id} does not exist"),
+                )
+            }
+            _ => {}
         }
 
-        if let Some(expected) = c.get("previousCommit").and_then(|v| v.as_str()) {
-            let head = live_before.map(|b| b.head.as_str()).unwrap_or("none");
+        let mut commit = c.clone();
+        commit.insert("resourceId".into(), json!(resource_id));
+        if live_before.is_none() {
+            commit.insert("type".into(), json!(type_name));
+        }
+        let spec: Option<&CommitSpec> = match ctx.action {
+            None => {
+                if !t.allow_commits {
+                    return bad(
+                        "",
+                        "commits-not-allowed",
+                        format!("{type_name} only accepts the actions of its profile"),
+                    );
+                }
+                None
+            }
+            Some((_, a)) => {
+                let Some(spec) = a
+                    .commits
+                    .iter()
+                    .find(|s| s.type_name == type_name && s.op == op)
+                else {
+                    return bad(
+                        "",
+                        "not-allowed",
+                        format!("{} does not allow a {} of {type_name}", a.name, op.name()),
+                    );
+                };
+                let body_key = match op {
+                    CommitOp::Create => Some("resourceData"),
+                    CommitOp::Update => Some("patch"),
+                    CommitOp::Delete => None,
+                };
+                if let Some(key) = body_key {
+                    let Some(body) = commit.get_mut(key).and_then(|b| b.as_object_mut()) else {
+                        return bad(&format!("/{key}"), "invalid", "object expected".into());
+                    };
+                    if let Some(fields) = &spec.fields {
+                        let extra: Vec<String> = body
+                            .keys()
+                            .filter(|k| !fields.contains(k))
+                            .cloned()
+                            .collect();
+                        if !extra.is_empty() {
+                            return Ok(Err(CommitProblem::Invalid(
+                                extra
+                                    .into_iter()
+                                    .map(|k| {
+                                        ip(
+                                            format!("{ptr}/{key}/{k}"),
+                                            "field-not-allowed",
+                                            format!("{} does not let you set {k}", a.name),
+                                        )
+                                    })
+                                    .collect(),
+                            )));
+                        }
+                    }
+                    for (k, v) in &spec.set {
+                        body.insert(k.clone(), profile::render_set(v, &actor.id, ctx.time));
+                    }
+                }
+                Some(spec)
+            }
+        };
+
+        if let Some(expected) = commit.get("previousCommit").and_then(|v| v.as_str()) {
+            let head = live_before
+                .as_ref()
+                .map(|b| b.head.as_str())
+                .unwrap_or("none");
             if head != expected {
                 return Ok(Err(CommitProblem::Stale(ip(
                     format!("{ptr}/previousCommit"),
@@ -1076,26 +1283,17 @@ impl Register {
             }
         }
 
-        let new_state = if deleted {
-            if live_before.is_none() {
-                return bad("not-found", format!("{resource_id} does not exist"));
+        let new_state = match op {
+            CommitOp::Delete => live_before.as_ref().unwrap().state.clone(),
+            CommitOp::Create => commit["resourceData"].clone(),
+            CommitOp::Update => {
+                let mut s = live_before.as_ref().unwrap().state.clone();
+                profile::merge_patch(&mut s, &commit["patch"]);
+                s
             }
-            live_before.unwrap().state.clone()
-        } else if let Some(data) = resource_data {
-            data.clone()
-        } else {
-            let Some(b) = live_before else {
-                return bad(
-                    "not-found",
-                    format!("{resource_id} does not exist; use resourceData to create it"),
-                );
-            };
-            let mut s = b.state.clone();
-            profile::merge_patch(&mut s, patch.unwrap());
-            s
         };
         if !new_state.is_object() {
-            return bad("invalid", "the resource must be a JSON object".into());
+            return bad("", "invalid", "the resource must be a JSON object".into());
         }
         if !deleted {
             if let Some(schema) = &t.schema {
@@ -1109,159 +1307,57 @@ impl Register {
                 }
             }
         }
-        if !self.check_write(t, live_before, &new_state, Right::Write, actor) {
+        let allowed = {
+            let refs = self.rule_refs(Some(&*overlay));
+            match spec.and_then(|s| s.rule.as_ref()) {
+                _ if actor.admin => true,
+                // A create is judged on the new resource, a change on what it was.
+                Some(rule) => {
+                    let on = match &live_before {
+                        Some(b) if op != CommitOp::Create => &b.state,
+                        _ => &new_state,
+                    };
+                    rule.eval_with(on, &actor.ctx(), &refs)
+                }
+                None => self.check_write(t, live_before.as_ref(), &new_state, actor, &refs),
+            }
+        };
+        if !allowed {
             return Ok(Err(CommitProblem::Forbidden));
         }
 
-        let mut stored_commit = commit.clone();
-        stored_commit["actor"] = json!(actor.id);
-        let event = json!({
-            "specversion": "1.0",
-            "id": commit_id,
-            "source": source,
-            "type": TYPE_COMMIT,
-            "subject": resource_id,
-            "time": time,
-            "datacontenttype": "application/json",
-            "actor": actor.id,
-            "data": stored_commit,
-        });
+        event["subject"] = json!(resource_id);
+        event["data"] = Value::Object(commit);
         let record = SubjectRecord {
-            subject: resource_id.to_string(),
+            subject: resource_id.clone(),
             type_name: type_name.clone(),
             state: new_state,
-            head: commit_id.to_string(),
+            head: ctx.commit_id.to_string(),
             sequence: 0,
             deleted,
             created: live_before
+                .as_ref()
                 .map(|b| b.created.clone())
-                .unwrap_or_else(|| time.to_string()),
-            updated: time.to_string(),
+                .unwrap_or_else(|| ctx.time.to_string()),
+            updated: ctx.time.to_string(),
         };
         let new_subject = before.is_none();
-        overlay.insert(resource_id.to_string(), Some(record.clone()));
+        overlay.insert(resource_id.clone(), Some(record.clone()));
         Ok(Ok(Change {
-            subject: resource_id.to_string(),
+            subject: resource_id,
             event,
             record,
             new_subject,
         }))
     }
+}
 
-    #[allow(clippy::too_many_arguments)]
-    fn apply_domain_event(
-        &self,
-        actor: &Actor,
-        envelope: &Value,
-        event_type: &str,
-        subject: &str,
-        id: &str,
-        time: &str,
-        overlay: &mut HashMap<String, Option<SubjectRecord>>,
-    ) -> Result<Result<Change, CommitProblem>, RegisterError> {
-        let bad = |ptr: &str, code: &str, reason: String| {
-            Ok(Err(CommitProblem::Invalid(vec![ip(ptr, code, reason)])))
-        };
-        let profile = match self.profiles.read().unwrap().event_type(event_type) {
-            Some(p) => p,
-            None => {
-                return bad(
-                    "/type",
-                    "unknown-type",
-                    format!("{event_type} is not a registered event type"),
-                )
-            }
-        };
-        let def = &profile.events[event_type];
-        let t = &profile.types[&def.subject_type];
-        let before = self.current(subject, overlay)?;
-        let live_before = before.as_ref().filter(|b| !b.deleted);
-        match (live_before, def.creates) {
-            (Some(_), true) => {
-                return bad("/subject", "exists", format!("{subject} already exists"))
-            }
-            (None, false) => {
-                return bad("/subject", "not-found", format!("{subject} does not exist"))
-            }
-            (Some(b), false) if b.type_name != def.subject_type => {
-                return bad(
-                    "/subject",
-                    "type-mismatch",
-                    format!("{subject} is a {}, not a {}", b.type_name, def.subject_type),
-                )
-            }
-            _ => {}
-        }
-        if let Some(expected) = envelope.get("previouscommit").and_then(|v| v.as_str()) {
-            let head = live_before.map(|b| b.head.as_str()).unwrap_or("none");
-            if head != expected {
-                return Ok(Err(CommitProblem::Stale(ip(
-                    "/previouscommit",
-                    "stale",
-                    format!("{subject} has changed; the last event is {head}"),
-                ))));
-            }
-        }
-        let data = envelope.get("data").cloned().unwrap_or(Value::Null);
-        if let Some(schema) = &def.dataschema {
-            let errs = profile::schema_errors(schema, &data);
-            if !errs.is_empty() {
-                return Ok(Err(CommitProblem::Invalid(
-                    errs.into_iter()
-                        .map(|(p, r)| ip(format!("/data{p}"), "schema", r))
-                        .collect(),
-                )));
-            }
-        }
-        let mut state = live_before
-            .map(|b| b.state.clone())
-            .unwrap_or_else(|| json!({}));
-        let ctx = TemplateContext {
-            data: &data,
-            time,
-            actor: &actor.id,
-            id,
-            subject,
-            event_type,
-        };
-        profile::apply_projection(&mut state, &def.projection, &ctx);
-        if let Some(schema) = &t.schema {
-            let errs = profile::schema_errors(schema, &state);
-            if !errs.is_empty() {
-                return Ok(Err(CommitProblem::Invalid(
-                    errs.into_iter()
-                        .map(|(p, r)| ip(format!("/state{p}"), "schema", r))
-                        .collect(),
-                )));
-            }
-        }
-        if !self.check_write(t, live_before, &state, def.right, actor) {
-            return Ok(Err(CommitProblem::Forbidden));
-        }
-        let mut event = envelope.clone();
-        event["time"] = json!(time);
-        event["actor"] = json!(actor.id);
-        let record = SubjectRecord {
-            subject: subject.to_string(),
-            type_name: def.subject_type.clone(),
-            state,
-            head: id.to_string(),
-            sequence: 0,
-            deleted: false,
-            created: live_before
-                .map(|b| b.created.clone())
-                .unwrap_or_else(|| time.to_string()),
-            updated: time.to_string(),
-        };
-        let new_subject = before.is_none();
-        overlay.insert(subject.to_string(), Some(record.clone()));
-        Ok(Ok(Change {
-            subject: subject.to_string(),
-            event,
-            record,
-            new_subject,
-        }))
-    }
+/// Where a commit sits in the request, and the action it belongs to.
+struct CommitCtx<'a> {
+    ptr: &'a str,
+    commit_id: &'a str,
+    time: &'a str,
+    action: Option<(&'a Profile, &'a Action)>,
 }
 
 #[derive(Debug, Clone, Copy)]

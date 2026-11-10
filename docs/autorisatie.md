@@ -6,30 +6,32 @@ In de gangbare termen is het een mix van ABAC (regels op eigenschappen) en ReBAC
 
 ## Regels in het profiel
 
-Per type staan in het profiel een leesregel, een schrijfregel en eventueel velden per rol:
+Per type staan in het profiel een leesregel, een aanmaak- en schrijfregel en eventueel velden per rol. Per handeling kan er een eigen regel bij ([profielen](profielen.md#handelingen)):
 
 ```yaml
 gesprek:
   read: >
     deelnames.partij = actor()
     OR aanleiding.zaak.zaaktype.team.leden = actor()
-  append: >
-    deelnames.partij = actor()
-  write: >
-    rollen.curator = actor() OR rollen.bewindvoerder = actor() OR rollen.behandelaar = actor()
-    OR aanleiding.zaak.zaaktype.team.leden = actor()
+  create: deelnames.partij = actor() OR team = actor('team')
+  write: team = actor('team')
   fields:
     - when: "actor('rol') = 'kcc'"
-      show: [onderwerp, status, laatsteBijdrage.tijd]
+      show: [onderwerp, status, team]
+bijdrage:
+  read: gesprek.deelnames.partij = actor() OR gesprek.team = actor('team')
+handeling bijdrage.toegevoegd:
+  rule: gesprek.deelnames.partij = actor() AND gesprek.status = 'open'
 ```
 
 De regels zijn [CQL2](query.md#filtertaal)-tekst, dezelfde taal als een query. Ze worden bij het registreren van het profiel geparst tot CQL2-JSON.
 
 - `actor()` is de identiteit uit het token (een URI van een persoon, medewerker of systeem). `actor('rol')` is een claim uit het token.
 - `read` bepaalt welke onderwerpen je ziet: in query's, in views, op de stroom en in de tijdlijn.
-- `append` bepaalt of je events mag toevoegen van types die het profiel als "toevoegen" markeert (zoals `bijdrage.toegevoegd`).
-- `write` bepaalt of je alle types mag schrijven (zoals `gesprek.afgesloten` of `deelname.toegevoegd`).
-- Een pad door een lijst matcht als *een* element matcht, per vergelijking apart. `deelnames.partij = actor() AND deelnames.rol = 'curator'` kan dus waar zijn met de partij uit de ene deelname en de rol uit de andere. Daarom houdt de projectie een veld `rollen` bij (`rollen.curator` is de lijst partijen met die rol), en kijkt de schrijfregel daarnaar. Zie `examples/profiles/gesprekken.json`.
+- `create` en `write` gelden voor handelingen zonder eigen `rule`, en voor een kale `json.commit` bij types met `allowCommits`.
+- De `rule` van een handeling bepaalt wie die handeling mag doen. Zo mag een inwoner een bijdrage plaatsen in een open gesprek waar hij deelnemer is, zonder het gesprek zelf te mogen wijzigen.
+- Een pad mag een verwijzing volgen: `gesprek.status` leest het gesprek waar de bijdrage naar wijst. In een filter van een client alleen als de lezer dat gesprek zelf mag zien.
+- Een pad door een lijst matcht als *een* element matcht, per vergelijking apart. `deelnames.partij = actor() AND deelnames.rol = 'curator'` kan dus waar zijn met de partij uit de ene deelname en de rol uit de andere. Wil je dat onderscheid, zet de rol dan in een eigen veld of in een eigen regel per handeling.
 - `fields` bepaalt welke velden je ziet. Zonder regel zie je alle velden van onderwerpen die je mag lezen.
 
 ## Rechten zijn relaties, en relaties zijn data
@@ -69,7 +71,7 @@ Een verlopen token sluit de stroom niet hard af. De server stuurt `auth.expiring
 
 ## Schrijven
 
-Een event mag als het onderwerp vóór het event door je `append`- of `write`-regel komt. Bij een nieuw onderwerp telt de stand ná het event: je kunt geen gesprek starten waarin je zelf niet zou mogen schrijven. Een weigering is altijd één 403 zonder details, zodat je niet kunt aftasten welke onderwerpen bestaan (zoals in ZaakChat #28).
+Een handeling mag als elke commit erin past bij de handeling en door de regel komt. Een wijziging wordt beoordeeld op de stand ervoor, een nieuwe resource op de stand erna: je kunt geen gesprek starten waarin je zelf niet zou mogen schrijven. Velden die de handeling zelf zet (`set`, zoals `door`), kan een client niet meesturen. Een weigering is altijd één 403 zonder details, zodat je niet kunt aftasten welke onderwerpen bestaan (zoals in ZaakChat #28).
 
 Systemen zoals Open Zaak of OneGround zijn ook een `actor()`. Het profiel geeft hun rechten per `source`: OneGround mag `nl.vng.gesprekken.*` schrijven met `source` gelijk aan zijn eigen URI. Alleen de bron die een onderwerp heeft gemaakt, mag het wissen (lab ADR-0004).
 

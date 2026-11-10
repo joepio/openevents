@@ -212,8 +212,8 @@ pub struct Notificatie {
     pub kenmerken: Value,
 }
 
-/// JSON Merge Patch from `old` to `new`, over the fields of `new` only (the state also
-/// holds fields that the projection adds, such as `statussen`). `None`: no change.
+/// JSON Merge Patch from `old` to `new`, over the fields of `new` only (the mirror may
+/// hold fields the adapter adds, such as `initiatorBsn`). `None`: no change.
 pub fn merge_patch(old: &Value, new: &Value) -> Option<Value> {
     match (old, new) {
         (Value::Object(o), Value::Object(n)) => {
@@ -260,110 +260,143 @@ fn event_id(parts: &[&str]) -> String {
     uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, parts.join("|").as_bytes()).to_string()
 }
 
-fn subject_exists(e: &RegisterError) -> bool {
-    matches!(e, RegisterError::Invalid(_, params)
-        if params.iter().any(|p| p.code == "exists" && p.name == "/subject"))
+/// The mirrored state of a resource, or `None` when it is not (or no longer) there.
+fn mirrored(register: &Register, actor: &Actor, url: &str) -> Option<Value> {
+    let mut v = register.get_subject(actor, url).ok()?;
+    v.as_object_mut()?.remove("_meta");
+    Some(v)
 }
 
-fn subject_missing(e: &RegisterError) -> bool {
-    matches!(e, RegisterError::Invalid(_, params)
-        if params.iter().any(|p| p.code == "not-found" && p.name == "/subject"))
-}
-
+/// A notificatie becomes one action whose commits change the mirror: the resource
+/// itself (created, patched with what changed, or deleted) and, for a subresource, the
+/// zaak it belongs to (ADR-0008). Event type `nl.vng.zgw.<kanaal>.<resource>.<actie>`,
+/// resource type `nl.vng.zgw.<resource>`.
 pub async fn handle(
     cfg: &NotificatiesConfig,
     register: &Register,
     n: Notificatie,
 ) -> Result<Outcome, String> {
-    let kind = format!("nl.vng.zgw.{}.{}.{}", n.kanaal, n.resource, n.actie);
-    if !register.knows_event_type(&kind) {
-        return Ok(Outcome::Ignored(format!("no profile for {kind}")));
+    let mut actie = n.actie.clone();
+    let kind = |actie: &str| format!("nl.vng.zgw.{}.{}.{actie}", n.kanaal, n.resource);
+    if !register.knows_action(&kind(&actie)) {
+        return Ok(Outcome::Ignored(format!("no profile for {}", kind(&actie))));
     }
-    let resource = if n.actie == "destroy" {
-        Value::Null
-    } else {
-        cfg.fetch(&n.resource_url).await?
+    let reader = Actor {
+        id: cfg.actor.clone(),
+        claims: json!({}),
+        admin: true,
     };
-    // The change: against the current state when the hoofdObject itself changed,
-    // otherwise the whole (new) subresource.
-    let patch = if n.actie == "destroy" {
-        Value::Null
-    } else if n.resource_url == n.hoofd_object && n.actie != "create" {
-        let reader = Actor {
-            id: cfg.actor.clone(),
-            claims: json!({}),
-            admin: true,
-        };
-        match register.get_subject(&reader, &n.hoofd_object) {
-            Ok(mut current) => {
-                if let Some(o) = current.as_object_mut() {
-                    o.remove("_meta");
-                }
-                match merge_patch(&current, &resource) {
-                    Some(p) => p,
-                    None => return Ok(Outcome::Ignored("no change".into())),
-                }
-            }
-            Err(_) => resource.clone(),
-        }
-    } else {
-        resource.clone()
-    };
+    let actor = cfg.actor();
     let time = n
         .aanmaakdatum
         .clone()
         .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
     let source = format!("urn:zgw:notificaties:{}", n.kanaal);
+    let is_hoofd = n.resource_url == n.hoofd_object;
+
+    // A subresource of a zaak we have not seen: mirror the zaak first.
+    if !is_hoofd && mirrored(register, &reader, &n.hoofd_object).is_none() {
+        let hoofd = hoofdresource(&n.kanaal).ok_or("unknown kanaal for the hoofdObject")?;
+        let create = format!("nl.vng.zgw.{}.{hoofd}.create", n.kanaal);
+        if !register.knows_action(&create) {
+            return Err(format!(
+                "{} is unknown and there is no {create}",
+                n.hoofd_object
+            ));
+        }
+        let zaak = cfg.fetch(&n.hoofd_object).await?;
+        let mirror = json!({
+            "specversion": "1.0",
+            "id": event_id(&[&n.hoofd_object, "spiegel"]),
+            "source": source,
+            "type": create,
+            "subject": n.hoofd_object,
+            "time": time,
+            "gespiegeld": true,
+            "data": { "type": format!("nl.vng.zgw.{hoofd}"), "resourceData": zaak },
+        });
+        match register.submit(&actor, mirror).await {
+            Ok(_) | Err(RegisterError::Conflict(_)) => {}
+            Err(e) => return Err(format!("mirror {}: {e:?}", n.hoofd_object)),
+        }
+    }
+
+    let current = mirrored(register, &reader, &n.resource_url);
+    let mut commits = Vec::new();
+    let mut new_resource = Value::Null;
+    match (actie.as_str(), &current) {
+        ("destroy", None) => return Ok(Outcome::Ignored("already gone".into())),
+        ("destroy", Some(_)) => {
+            commits.push(json!({ "resourceId": n.resource_url, "deleted": true }));
+        }
+        ("create", Some(_)) => {
+            return Ok(Outcome::Ignored(format!(
+                "{} was already mirrored",
+                n.resource_url
+            )))
+        }
+        (_, None) => {
+            // A create, or a change to something we missed: mirror it whole.
+            actie = "create".into();
+            new_resource = cfg.fetch(&n.resource_url).await?;
+            commits.push(json!({
+                "resourceId": n.resource_url,
+                "type": format!("nl.vng.zgw.{}", n.resource),
+                "resourceData": new_resource,
+            }));
+        }
+        (_, Some(old)) => {
+            new_resource = cfg.fetch(&n.resource_url).await?;
+            if let Some(patch) = merge_patch(old, &new_resource) {
+                commits.push(json!({ "resourceId": n.resource_url, "patch": patch }));
+            }
+        }
+    }
+
+    // A subresource also changes the zaak (Open Zaak sets `status`, `resultaat`, ...).
+    // An initiator's BSN is copied onto the zaak, so the zaak's read rule can use it.
+    if !is_hoofd {
+        if let Some(old_zaak) = mirrored(register, &reader, &n.hoofd_object) {
+            let mut zaak = cfg.fetch(&n.hoofd_object).await?;
+            let bsn = new_resource["betrokkeneIdentificatie"]["inpBsn"].as_str();
+            if n.resource == "rol"
+                && new_resource["omschrijvingGeneriek"] == "initiator"
+                && bsn.is_some()
+            {
+                let mut list: Vec<Value> = old_zaak["initiatorBsn"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
+                if !list.iter().any(|b| b.as_str() == bsn) {
+                    list.push(json!(bsn));
+                }
+                zaak["initiatorBsn"] = Value::Array(list);
+            }
+            if let Some(patch) = merge_patch(&old_zaak, &zaak) {
+                commits.push(json!({ "resourceId": n.hoofd_object, "patch": patch }));
+            }
+        }
+    }
+    if commits.is_empty() {
+        return Ok(Outcome::Ignored("no change".into()));
+    }
+    let data = if commits.len() == 1 {
+        commits.pop().unwrap()
+    } else {
+        json!({ "commits": commits })
+    };
     let event = json!({
         "specversion": "1.0",
         "id": event_id(&[&n.resource_url, &n.actie, &time]),
         "source": source,
-        "type": kind,
-        "subject": n.hoofd_object,
+        "type": kind(&actie),
+        "subject": n.resource_url,
         "time": time,
         "datacontenttype": "application/json",
-        "data": { "patch": patch, "resourceUrl": n.resource_url, "kenmerken": n.kenmerken },
+        "data": data,
     });
-    let actor = cfg.actor();
-    match register.submit(&actor, event.clone()).await {
-        Ok(_) => Ok(Outcome::Stored),
-        Err(e) if subject_missing(&e) => {
-            // Unknown zaak: mirror it first, then store this notificatie.
-            let hoofd = hoofdresource(&n.kanaal).ok_or("unknown kanaal for the hoofdObject")?;
-            let create = format!("nl.vng.zgw.{}.{hoofd}.create", n.kanaal);
-            if !register.knows_event_type(&create) {
-                return Err(format!(
-                    "{} is unknown and there is no {create}",
-                    n.hoofd_object
-                ));
-            }
-            let zaak = cfg.fetch(&n.hoofd_object).await?;
-            let mirror = json!({
-                "specversion": "1.0",
-                "id": event_id(&[&n.hoofd_object, "spiegel"]),
-                "source": source,
-                "type": create,
-                "subject": n.hoofd_object,
-                "time": time,
-                "datacontenttype": "application/json",
-                "data": { "patch": zaak, "resourceUrl": n.hoofd_object, "kenmerken": {}, "gespiegeld": true },
-            });
-            register
-                .submit(&actor, mirror)
-                .await
-                .map_err(|e| format!("mirror {}: {e:?}", n.hoofd_object))?;
-            register
-                .submit(&actor, event)
-                .await
-                .map(|_| Outcome::Stored)
-                .map_err(|e| format!("{e:?}"))
-        }
-        Err(RegisterError::Conflict(_)) => Ok(Outcome::Stored),
-        // A create for a zaak that was already mirrored: the mirror has the same data.
-        Err(e) if subject_exists(&e) => Ok(Outcome::Ignored(format!(
-            "{} was already mirrored",
-            n.hoofd_object
-        ))),
+    match register.submit(&actor, event).await {
+        Ok(_) | Err(RegisterError::Conflict(_)) => Ok(Outcome::Stored),
         Err(e) => Err(format!("{e:?}")),
     }
 }

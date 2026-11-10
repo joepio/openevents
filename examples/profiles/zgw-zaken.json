@@ -1,6 +1,6 @@
 {
   "id": "nl.vng.zgw.zaken",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "title": "Zaakspiegel uit ZGW-notificaties (Open Zaak via Open Notificaties)",
   "personas": [
     {
@@ -31,7 +31,6 @@
   ],
   "types": {
     "nl.vng.zgw.zaak": {
-      "allowCommits": false,
       "queryable": [
         "identificatie",
         "bronorganisatie",
@@ -39,9 +38,8 @@
         "startdatum",
         "einddatum",
         "vertrouwelijkheidaanduiding",
-        "huidigeStatus.statustype",
-        "rollen.initiator",
-        "verwijderd"
+        "status",
+        "initiatorBsn"
       ],
       "schema": {
         "type": "object",
@@ -57,11 +55,17 @@
           },
           "zaaktype": {
             "type": "string"
+          },
+          "initiatorBsn": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
       "rules": {
-        "read": "zaaktype = actor('zaaktypen') OR actor('rol') IN ('kcc', 'systeem') OR rollen.initiator = actor('bsn')",
+        "read": "zaaktype = actor('zaaktypen') OR actor('rol') IN ('kcc', 'systeem') OR initiatorBsn = actor('bsn')",
         "write": "actor('rol') = 'systeem'",
         "create": "actor('rol') = 'systeem'",
         "fields": [
@@ -73,377 +77,417 @@
               "zaaktype",
               "startdatum",
               "einddatum",
-              "huidigeStatus",
+              "status",
               "resultaat"
             ]
           }
         ]
       }
-    }
-  },
-  "events": {
-    "nl.vng.zgw.zaken.zaak.create": {
-      "subjectType": "nl.vng.zgw.zaak",
-      "creates": true,
-      "dataschema": {
+    },
+    "nl.vng.zgw.status": {
+      "queryable": [
+        "zaak",
+        "statustype",
+        "datumStatusGezet"
+      ],
+      "schema": {
         "type": "object",
         "required": [
-          "resourceUrl"
+          "url",
+          "zaak"
         ],
         "properties": {
-          "patch": {
-            "type": [
-              "object",
-              "null"
-            ]
-          },
-          "resourceUrl": {
+          "url": {
             "type": "string"
           },
-          "kenmerken": {
-            "type": [
-              "object",
-              "null"
-            ]
-          },
-          "gespiegeld": {
-            "type": "boolean"
+          "zaak": {
+            "type": "string"
           }
         }
       },
-      "projection": [
+      "rules": {
+        "read": "zaak.zaaktype = actor('zaaktypen') OR actor('rol') IN ('systeem', 'kcc') OR zaak.initiatorBsn = actor('bsn')",
+        "write": "actor('rol') = 'systeem'",
+        "create": "actor('rol') = 'systeem'"
+      }
+    },
+    "nl.vng.zgw.rol": {
+      "queryable": [
+        "zaak",
+        "roltype",
+        "omschrijvingGeneriek"
+      ],
+      "schema": {
+        "type": "object",
+        "required": [
+          "url",
+          "zaak"
+        ],
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "zaak": {
+            "type": "string"
+          }
+        }
+      },
+      "rules": {
+        "read": "zaak.zaaktype = actor('zaaktypen') OR actor('rol') IN ('systeem') OR zaak.initiatorBsn = actor('bsn')",
+        "write": "actor('rol') = 'systeem'",
+        "create": "actor('rol') = 'systeem'"
+      }
+    },
+    "nl.vng.zgw.resultaat": {
+      "queryable": [
+        "zaak",
+        "resultaattype"
+      ],
+      "schema": {
+        "type": "object",
+        "required": [
+          "url",
+          "zaak"
+        ],
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "zaak": {
+            "type": "string"
+          }
+        }
+      },
+      "rules": {
+        "read": "zaak.zaaktype = actor('zaaktypen') OR actor('rol') IN ('systeem', 'kcc') OR zaak.initiatorBsn = actor('bsn')",
+        "write": "actor('rol') = 'systeem'",
+        "create": "actor('rol') = 'systeem'"
+      }
+    },
+    "nl.vng.zgw.zaakinformatieobject": {
+      "queryable": [
+        "zaak",
+        "informatieobject"
+      ],
+      "schema": {
+        "type": "object",
+        "required": [
+          "url",
+          "zaak"
+        ],
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "zaak": {
+            "type": "string"
+          }
+        }
+      },
+      "rules": {
+        "read": "zaak.zaaktype = actor('zaaktypen') OR actor('rol') IN ('systeem', 'kcc') OR zaak.initiatorBsn = actor('bsn')",
+        "write": "actor('rol') = 'systeem'",
+        "create": "actor('rol') = 'systeem'"
+      }
+    },
+    "nl.vng.zgw.zaakobject": {
+      "queryable": [
+        "zaak",
+        "object",
+        "objectType"
+      ],
+      "schema": {
+        "type": "object",
+        "required": [
+          "url",
+          "zaak"
+        ],
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "zaak": {
+            "type": "string"
+          }
+        }
+      },
+      "rules": {
+        "read": "zaak.zaaktype = actor('zaaktypen') OR actor('rol') IN ('systeem', 'kcc') OR zaak.initiatorBsn = actor('bsn')",
+        "write": "actor('rol') = 'systeem'",
+        "create": "actor('rol') = 'systeem'"
+      }
+    }
+  },
+  "actions": {
+    "nl.vng.zgw.zaken.zaak.create": {
+      "commits": [
         {
-          "op": "merge",
-          "path": "",
-          "value": "$data.patch"
+          "type": "nl.vng.zgw.zaak",
+          "op": "create"
         }
       ]
     },
     "nl.vng.zgw.zaken.zaak.update": {
-      "subjectType": "nl.vng.zgw.zaak",
-      "right": "write",
-      "dataschema": {
-        "type": "object",
-        "required": [
-          "resourceUrl"
-        ],
-        "properties": {
-          "patch": {
-            "type": [
-              "object",
-              "null"
-            ]
-          },
-          "resourceUrl": {
-            "type": "string"
-          },
-          "kenmerken": {
-            "type": [
-              "object",
-              "null"
-            ]
-          },
-          "gespiegeld": {
-            "type": "boolean"
-          }
-        }
-      },
-      "projection": [
+      "commits": [
         {
-          "op": "merge",
-          "path": "",
-          "value": "$data.patch"
+          "type": "nl.vng.zgw.zaak",
+          "op": "update"
         }
       ]
     },
     "nl.vng.zgw.zaken.zaak.partial_update": {
-      "subjectType": "nl.vng.zgw.zaak",
-      "right": "write",
-      "dataschema": {
-        "type": "object",
-        "required": [
-          "resourceUrl"
-        ],
-        "properties": {
-          "patch": {
-            "type": [
-              "object",
-              "null"
-            ]
-          },
-          "resourceUrl": {
-            "type": "string"
-          },
-          "kenmerken": {
-            "type": [
-              "object",
-              "null"
-            ]
-          },
-          "gespiegeld": {
-            "type": "boolean"
-          }
-        }
-      },
-      "projection": [
+      "commits": [
         {
-          "op": "merge",
-          "path": "",
-          "value": "$data.patch"
+          "type": "nl.vng.zgw.zaak",
+          "op": "update"
         }
       ]
     },
     "nl.vng.zgw.zaken.zaak.destroy": {
-      "subjectType": "nl.vng.zgw.zaak",
-      "right": "write",
-      "dataschema": {
-        "type": "object",
-        "required": [
-          "resourceUrl"
-        ],
-        "properties": {
-          "patch": {
-            "type": [
-              "object",
-              "null"
-            ]
-          },
-          "resourceUrl": {
-            "type": "string"
-          },
-          "kenmerken": {
-            "type": [
-              "object",
-              "null"
-            ]
-          },
-          "gespiegeld": {
-            "type": "boolean"
-          }
-        }
-      },
-      "projection": [
+      "commits": [
         {
-          "op": "set",
-          "path": "verwijderd",
-          "value": true
+          "type": "nl.vng.zgw.zaak",
+          "op": "delete"
         }
       ]
     },
     "nl.vng.zgw.zaken.status.create": {
-      "subjectType": "nl.vng.zgw.zaak",
-      "right": "write",
-      "dataschema": {
-        "type": "object",
-        "required": [
-          "resourceUrl"
-        ],
-        "properties": {
-          "patch": {
-            "type": [
-              "object",
-              "null"
-            ]
-          },
-          "resourceUrl": {
-            "type": "string"
-          },
-          "kenmerken": {
-            "type": [
-              "object",
-              "null"
-            ]
-          },
-          "gespiegeld": {
-            "type": "boolean"
-          }
-        }
-      },
-      "projection": [
+      "commits": [
         {
-          "op": "set",
-          "path": "huidigeStatus",
-          "value": {
-            "url": "$data.patch.url",
-            "statustype": "$data.patch.statustype",
-            "datumStatusGezet": "$data.patch.datumStatusGezet",
-            "statustoelichting": "$data.patch.statustoelichting"
-          }
+          "type": "nl.vng.zgw.status",
+          "op": "create"
         },
         {
-          "op": "append",
-          "path": "statussen",
-          "value": {
-            "url": "$data.patch.url",
-            "statustype": "$data.patch.statustype",
-            "datumStatusGezet": "$data.patch.datumStatusGezet"
-          }
+          "type": "nl.vng.zgw.zaak",
+          "op": "update"
+        }
+      ]
+    },
+    "nl.vng.zgw.zaken.status.update": {
+      "commits": [
+        {
+          "type": "nl.vng.zgw.status",
+          "op": "update"
+        },
+        {
+          "type": "nl.vng.zgw.zaak",
+          "op": "update"
+        }
+      ]
+    },
+    "nl.vng.zgw.zaken.status.partial_update": {
+      "commits": [
+        {
+          "type": "nl.vng.zgw.status",
+          "op": "update"
+        },
+        {
+          "type": "nl.vng.zgw.zaak",
+          "op": "update"
+        }
+      ]
+    },
+    "nl.vng.zgw.zaken.status.destroy": {
+      "commits": [
+        {
+          "type": "nl.vng.zgw.status",
+          "op": "delete"
+        },
+        {
+          "type": "nl.vng.zgw.zaak",
+          "op": "update"
         }
       ]
     },
     "nl.vng.zgw.zaken.rol.create": {
-      "subjectType": "nl.vng.zgw.zaak",
-      "right": "write",
-      "dataschema": {
-        "type": "object",
-        "required": [
-          "resourceUrl"
-        ],
-        "properties": {
-          "patch": {
-            "type": [
-              "object",
-              "null"
-            ]
-          },
-          "resourceUrl": {
-            "type": "string"
-          },
-          "kenmerken": {
-            "type": [
-              "object",
-              "null"
-            ]
-          },
-          "gespiegeld": {
-            "type": "boolean"
-          }
-        }
-      },
-      "projection": [
+      "commits": [
         {
-          "op": "append",
-          "path": "betrokkenen",
-          "value": {
-            "url": "$data.patch.url",
-            "roltype": "$data.patch.roltype",
-            "omschrijvingGeneriek": "$data.patch.omschrijvingGeneriek",
-            "betrokkeneType": "$data.patch.betrokkeneType",
-            "betrokkene": "$data.patch.betrokkene"
-          }
+          "type": "nl.vng.zgw.rol",
+          "op": "create"
         },
         {
-          "op": "append",
-          "path": "rollen.{$data.patch.omschrijvingGeneriek}",
-          "value": "$data.patch.betrokkeneIdentificatie.inpBsn"
+          "type": "nl.vng.zgw.zaak",
+          "op": "update"
+        }
+      ]
+    },
+    "nl.vng.zgw.zaken.rol.update": {
+      "commits": [
+        {
+          "type": "nl.vng.zgw.rol",
+          "op": "update"
+        },
+        {
+          "type": "nl.vng.zgw.zaak",
+          "op": "update"
+        }
+      ]
+    },
+    "nl.vng.zgw.zaken.rol.partial_update": {
+      "commits": [
+        {
+          "type": "nl.vng.zgw.rol",
+          "op": "update"
+        },
+        {
+          "type": "nl.vng.zgw.zaak",
+          "op": "update"
+        }
+      ]
+    },
+    "nl.vng.zgw.zaken.rol.destroy": {
+      "commits": [
+        {
+          "type": "nl.vng.zgw.rol",
+          "op": "delete"
+        },
+        {
+          "type": "nl.vng.zgw.zaak",
+          "op": "update"
         }
       ]
     },
     "nl.vng.zgw.zaken.resultaat.create": {
-      "subjectType": "nl.vng.zgw.zaak",
-      "right": "write",
-      "dataschema": {
-        "type": "object",
-        "required": [
-          "resourceUrl"
-        ],
-        "properties": {
-          "patch": {
-            "type": [
-              "object",
-              "null"
-            ]
-          },
-          "resourceUrl": {
-            "type": "string"
-          },
-          "kenmerken": {
-            "type": [
-              "object",
-              "null"
-            ]
-          },
-          "gespiegeld": {
-            "type": "boolean"
-          }
-        }
-      },
-      "projection": [
+      "commits": [
         {
-          "op": "set",
-          "path": "resultaat",
-          "value": {
-            "url": "$data.patch.url",
-            "resultaattype": "$data.patch.resultaattype",
-            "toelichting": "$data.patch.toelichting"
-          }
+          "type": "nl.vng.zgw.resultaat",
+          "op": "create"
+        },
+        {
+          "type": "nl.vng.zgw.zaak",
+          "op": "update"
+        }
+      ]
+    },
+    "nl.vng.zgw.zaken.resultaat.update": {
+      "commits": [
+        {
+          "type": "nl.vng.zgw.resultaat",
+          "op": "update"
+        },
+        {
+          "type": "nl.vng.zgw.zaak",
+          "op": "update"
+        }
+      ]
+    },
+    "nl.vng.zgw.zaken.resultaat.partial_update": {
+      "commits": [
+        {
+          "type": "nl.vng.zgw.resultaat",
+          "op": "update"
+        },
+        {
+          "type": "nl.vng.zgw.zaak",
+          "op": "update"
+        }
+      ]
+    },
+    "nl.vng.zgw.zaken.resultaat.destroy": {
+      "commits": [
+        {
+          "type": "nl.vng.zgw.resultaat",
+          "op": "delete"
+        },
+        {
+          "type": "nl.vng.zgw.zaak",
+          "op": "update"
         }
       ]
     },
     "nl.vng.zgw.zaken.zaakinformatieobject.create": {
-      "subjectType": "nl.vng.zgw.zaak",
-      "right": "write",
-      "dataschema": {
-        "type": "object",
-        "required": [
-          "resourceUrl"
-        ],
-        "properties": {
-          "patch": {
-            "type": [
-              "object",
-              "null"
-            ]
-          },
-          "resourceUrl": {
-            "type": "string"
-          },
-          "kenmerken": {
-            "type": [
-              "object",
-              "null"
-            ]
-          },
-          "gespiegeld": {
-            "type": "boolean"
-          }
-        }
-      },
-      "projection": [
+      "commits": [
         {
-          "op": "append",
-          "path": "documenten",
-          "value": "$data.patch.informatieobject"
+          "type": "nl.vng.zgw.zaakinformatieobject",
+          "op": "create"
+        },
+        {
+          "type": "nl.vng.zgw.zaak",
+          "op": "update"
+        }
+      ]
+    },
+    "nl.vng.zgw.zaken.zaakinformatieobject.update": {
+      "commits": [
+        {
+          "type": "nl.vng.zgw.zaakinformatieobject",
+          "op": "update"
+        },
+        {
+          "type": "nl.vng.zgw.zaak",
+          "op": "update"
+        }
+      ]
+    },
+    "nl.vng.zgw.zaken.zaakinformatieobject.partial_update": {
+      "commits": [
+        {
+          "type": "nl.vng.zgw.zaakinformatieobject",
+          "op": "update"
+        },
+        {
+          "type": "nl.vng.zgw.zaak",
+          "op": "update"
+        }
+      ]
+    },
+    "nl.vng.zgw.zaken.zaakinformatieobject.destroy": {
+      "commits": [
+        {
+          "type": "nl.vng.zgw.zaakinformatieobject",
+          "op": "delete"
+        },
+        {
+          "type": "nl.vng.zgw.zaak",
+          "op": "update"
         }
       ]
     },
     "nl.vng.zgw.zaken.zaakobject.create": {
-      "subjectType": "nl.vng.zgw.zaak",
-      "right": "write",
-      "dataschema": {
-        "type": "object",
-        "required": [
-          "resourceUrl"
-        ],
-        "properties": {
-          "patch": {
-            "type": [
-              "object",
-              "null"
-            ]
-          },
-          "resourceUrl": {
-            "type": "string"
-          },
-          "kenmerken": {
-            "type": [
-              "object",
-              "null"
-            ]
-          },
-          "gespiegeld": {
-            "type": "boolean"
-          }
-        }
-      },
-      "projection": [
+      "commits": [
         {
-          "op": "append",
-          "path": "objecten",
-          "value": {
-            "object": "$data.patch.object",
-            "objectType": "$data.patch.objectType"
-          }
+          "type": "nl.vng.zgw.zaakobject",
+          "op": "create"
+        },
+        {
+          "type": "nl.vng.zgw.zaak",
+          "op": "update"
+        }
+      ]
+    },
+    "nl.vng.zgw.zaken.zaakobject.update": {
+      "commits": [
+        {
+          "type": "nl.vng.zgw.zaakobject",
+          "op": "update"
+        },
+        {
+          "type": "nl.vng.zgw.zaak",
+          "op": "update"
+        }
+      ]
+    },
+    "nl.vng.zgw.zaken.zaakobject.partial_update": {
+      "commits": [
+        {
+          "type": "nl.vng.zgw.zaakobject",
+          "op": "update"
+        },
+        {
+          "type": "nl.vng.zgw.zaak",
+          "op": "update"
+        }
+      ]
+    },
+    "nl.vng.zgw.zaken.zaakobject.destroy": {
+      "commits": [
+        {
+          "type": "nl.vng.zgw.zaakobject",
+          "op": "delete"
+        },
+        {
+          "type": "nl.vng.zgw.zaak",
+          "op": "update"
         }
       ]
     }

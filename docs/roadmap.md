@@ -9,9 +9,9 @@ Elke fase eindigt met iets dat te laten zien is, en met de bijbehorende wijzigin
 
 ## Fase 1: kern (2 tot 3 weken)
 
-**Stand 10 november 2026:** de eerste versie van de kern staat in `crates/` (zie de README, "Wat er in fase 1 zit"). OIDC met JWKS, batch, OpenAPI per profiel en de Notificaties-adapter staan erin (zie [aansluiten.md](aansluiten.md)). Nog open in deze fase: de demo op DemoStack, conformance-tests als aparte set, een compatibiliteitscheck bij het wijzigen van profielen.
+**Stand 10 november 2026:** de eerste versie van de kern staat in `crates/` (zie de README, "Wat er in fase 1 zit"). OIDC met JWKS, batch, OpenAPI per profiel en de Notificaties-adapter staan erin (zie [aansluiten.md](aansluiten.md)). Sinds [ADR-0008](adr/0008-events-zijn-commits.md) is elk event een commit en benoemt het type de handeling; de projectietaal is weg, regels en filters volgen verwijzingen. Nog open in deze fase: de demo op DemoStack, conformance-tests als aparte set, een compatibiliteitscheck bij het wijzigen van profielen.
 
-- Rust-crate `openevents-core`: KV-trait met een embedded implementatie, log, idempotentie, JSON Commit (overgenomen uit ZaakChat `commits.rs`), projectie met declaratieve regels, `head` en 412.
+- Rust-crate `openevents-core`: KV-trait met een embedded implementatie, log, idempotentie, JSON Commit (overgenomen uit ZaakChat `commits.rs`), handelingen met commits (JSON Merge Patch), `head` en 412.
 - `openevents-server`: `POST /events`, `GET /events` (SSE met `Last-Event-ID` en tickets), `GET /subjects/{subject}` en de tijdlijn.
 - Profielen tijdens runtime met JSON Schema-validatie.
 - Lees- en schrijfregels per type (eerst zonder paden, alleen `deelnames.partij = actor()`); OIDC-tokens.
@@ -31,7 +31,7 @@ Elke fase eindigt met iets dat te laten zien is, en met de bijbehorende wijzigin
 
 ## Fase 3: Gesprekken als profiel (2 weken)
 
-- Profiel `nl.vng.gesprekken` met projectie en lees- en schrijfregels.
+- Profiel `nl.vng.gesprekken` met handelingen en lees- en schrijfregels.
 - Consumers voor het automatische antwoord en het automatisch sluiten.
 - Dunne REST-laag die het Gesprekken-contract (lab PR #47) op events vertaalt.
 - Consumer voor klantcontact in Open Klant bij afsluiten.

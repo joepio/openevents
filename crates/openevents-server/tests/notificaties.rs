@@ -47,6 +47,7 @@ async fn fake_open_zaak(
                         "url": url, "identificatie": "ZAAK-2026-0001", "bronorganisatie": "123456782",
                         "omschrijving": "Bezwaar tegen WOZ-beschikking", "zaaktype": BEZWAAR,
                         "startdatum": "2026-11-10", "vertrouwelijkheidaanduiding": "vertrouwelijk",
+                        "status": format!("{b}/zaken/api/v1/statussen/s1"),
                         "einddatum": if afgesloten.load(Ordering::SeqCst) { json!("2026-11-12") } else { Value::Null }
                     }),
                     "statussen" => json!({
@@ -213,12 +214,37 @@ async fn notificaties_become_a_zaakspiegel() {
     .await;
     assert_eq!(s, StatusCode::OK, "{z}");
     assert_eq!(z["identificatie"], "ZAAK-2026-0001");
-    assert_eq!(
-        z["huidigeStatus"]["statustoelichting"],
-        "In behandeling genomen"
-    );
-    assert_eq!(z["statussen"].as_array().unwrap().len(), 1);
-    assert_eq!(z["rollen"]["initiator"][0], "999993653");
+    // The rol.create also patched the zaak with the initiator's BSN.
+    assert_eq!(z["initiatorBsn"][0], "999993653");
+    // Subresources are resources of their own, readable through their zaak.
+    let behandelaar =
+        format!("Bearer dev:https://id.example.nl/behandelaar|rol=medewerker|zaaktypen={BEZWAAR}");
+    let status = z["status"]
+        .as_str()
+        .unwrap()
+        .replace(':', "%3A")
+        .replace('/', "%2F");
+    let (s, st) = call(
+        &app,
+        "GET",
+        &format!("/subjects/{status}"),
+        &behandelaar,
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{st}");
+    assert_eq!(st["statustoelichting"], "In behandeling genomen");
+    let (s, q) = call(
+        &app,
+        "POST",
+        "/query",
+        &behandelaar,
+        Some(json!({
+        "type": "nl.vng.zgw.status", "filter": format!("zaak.identificatie = 'ZAAK-2026-0001'") })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{q}");
+    assert_eq!(q["results"].as_array().unwrap().len(), 1);
 
     // An update carries only the change; an update without change stores nothing.
     let mut upd = notificatie(&base, "zaak", "zaken/z1", "partial_update");
@@ -247,14 +273,13 @@ async fn notificaties_become_a_zaakspiegel() {
         types,
         [
             "nl.vng.zgw.zaken.zaak.create",
-            "nl.vng.zgw.zaken.status.create",
             "nl.vng.zgw.zaken.rol.create",
             "nl.vng.zgw.zaken.zaak.partial_update"
         ],
         "{tl}"
     );
     assert_eq!(
-        tl["events"][3]["data"]["patch"],
+        tl["events"][2]["data"]["patch"],
         json!({ "einddatum": "2026-11-12" })
     );
     let (_, z) = call(
@@ -266,10 +291,7 @@ async fn notificaties_become_a_zaakspiegel() {
     )
     .await;
     assert_eq!(z["einddatum"], "2026-11-12");
-    assert_eq!(
-        z["huidigeStatus"]["statustoelichting"],
-        "In behandeling genomen"
-    );
+    assert_eq!(z["initiatorBsn"][0], "999993653");
 
     // The initiator sees her zaak through the BSN in her token; someone else does not.
     let (s, _) = call(

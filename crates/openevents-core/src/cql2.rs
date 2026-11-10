@@ -4,7 +4,8 @@
 //! (used on the wire). Supported in this first version: `=`, `<>`, `<`, `<=`, `>`, `>=`,
 //! `in`, `isNull`, `and`, `or`, `not`, and the function `actor()` / `actor('claim')`.
 //! Properties are dotted paths into the subject's state; a path through a list matches
-//! when any element matches.
+//! when any element matches. A path may follow a reference: when a part indexes into a
+//! string, that string is looked up as a subject (ADR-0008), through [`Refs`].
 
 use serde_json::{json, Value};
 
@@ -56,6 +57,25 @@ pub struct ActorContext {
     pub claims: Value,
 }
 
+/// Looks up referenced subjects while evaluating. The register decides what the
+/// evaluator may see: everything for profile rules, only readable subjects (and their
+/// visible fields) for client filters.
+pub trait Refs {
+    fn get(&self, subject: &str) -> Option<Value>;
+}
+
+/// No references: a path into a string matches nothing.
+pub struct NoRefs;
+
+impl Refs for NoRefs {
+    fn get(&self, _: &str) -> Option<Value> {
+        None
+    }
+}
+
+/// At most this many references are followed in one path.
+pub const MAX_HOPS: usize = 3;
+
 impl Expr {
     /// Does the filter use `actor()`? Client filters may not; profile rules may.
     pub fn uses_actor(&self) -> bool {
@@ -101,22 +121,26 @@ impl Expr {
     }
 
     pub fn eval(&self, doc: &Value, actor: &ActorContext) -> bool {
+        self.eval_with(doc, actor, &NoRefs)
+    }
+
+    pub fn eval_with(&self, doc: &Value, actor: &ActorContext, refs: &dyn Refs) -> bool {
         match self {
             Expr::Bool(b) => *b,
-            Expr::And(v) => v.iter().all(|e| e.eval(doc, actor)),
-            Expr::Or(v) => v.iter().any(|e| e.eval(doc, actor)),
-            Expr::Not(e) => !e.eval(doc, actor),
-            Expr::IsNull(a) => resolve(a, doc, actor).iter().all(|v| v.is_null()),
+            Expr::And(v) => v.iter().all(|e| e.eval_with(doc, actor, refs)),
+            Expr::Or(v) => v.iter().any(|e| e.eval_with(doc, actor, refs)),
+            Expr::Not(e) => !e.eval_with(doc, actor, refs),
+            Expr::IsNull(a) => resolve(a, doc, actor, refs).iter().all(|v| v.is_null()),
             Expr::Cmp(op, a, b) => {
-                let left = resolve(a, doc, actor);
-                let right = resolve(b, doc, actor);
+                let left = resolve(a, doc, actor, refs);
+                let right = resolve(b, doc, actor, refs);
                 left.iter()
                     .any(|l| right.iter().any(|r| compare(*op, l, r)))
             }
             Expr::In(a, list) => {
-                let left = resolve(a, doc, actor);
+                let left = resolve(a, doc, actor, refs);
                 list.iter().any(|item| {
-                    let right = resolve(item, doc, actor);
+                    let right = resolve(item, doc, actor, refs);
                     left.iter()
                         .any(|l| right.iter().any(|r| compare(CmpOp::Eq, l, r)))
                 })
@@ -196,10 +220,49 @@ pub fn lookup<'a>(doc: &'a Value, path: &str) -> Vec<&'a Value> {
     out
 }
 
-fn resolve(o: &Operand, doc: &Value, actor: &ActorContext) -> Vec<Value> {
+/// Like [`lookup`], but a part that indexes into a string follows it as a reference.
+pub fn lookup_refs(doc: &Value, path: &str, refs: &dyn Refs) -> Vec<Value> {
+    let mut current = vec![doc.clone()];
+    let mut hops = 0;
+    for part in path.split('.') {
+        let mut next = Vec::new();
+        for v in current {
+            let items = match v {
+                Value::Array(items) => items,
+                other => vec![other],
+            };
+            for item in items {
+                let item = match item {
+                    Value::String(s) if hops < MAX_HOPS => {
+                        hops += 1;
+                        match refs.get(&s) {
+                            Some(r) => r,
+                            None => continue,
+                        }
+                    }
+                    other => other,
+                };
+                if let Some(x) = item.get(part) {
+                    next.push(x.clone());
+                }
+            }
+        }
+        current = next;
+    }
+    let mut out = Vec::new();
+    for v in current {
+        match v {
+            Value::Array(items) => out.extend(items),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+fn resolve(o: &Operand, doc: &Value, actor: &ActorContext, refs: &dyn Refs) -> Vec<Value> {
     match o {
         Operand::Literal(v) => vec![v.clone()],
-        Operand::Property(p) => lookup(doc, p).into_iter().cloned().collect(),
+        Operand::Property(p) => lookup_refs(doc, p, refs),
         Operand::Actor(None) => vec![Value::String(actor.id.clone())],
         Operand::Actor(Some(claim)) => lookup(&actor.claims, claim).into_iter().cloned().collect(),
     }
@@ -666,6 +729,24 @@ mod tests {
         assert!(parse_text("a.. = 1").is_err());
         assert!(parse_json(&json!({ "op": "like", "args": [] })).is_err());
         assert!(parse_text("x = 1 extra").is_err());
+    }
+
+    #[test]
+    fn follows_references() {
+        struct Two;
+        impl Refs for Two {
+            fn get(&self, s: &str) -> Option<Value> {
+                (s == "g1").then(|| json!({ "status": "open", "deelnames": [ { "partij": "a" } ] }))
+            }
+        }
+        let doc = json!({ "gesprek": "g1", "tekst": "hoi" });
+        let e =
+            parse_text("gesprek.deelnames.partij = actor() AND gesprek.status = 'open'").unwrap();
+        assert!(e.eval_with(&doc, &actor("a", json!({})), &Two));
+        assert!(!e.eval_with(&doc, &actor("b", json!({})), &Two));
+        assert!(!e.eval(&doc, &actor("a", json!({}))));
+        let other = json!({ "gesprek": "g2" });
+        assert!(!e.eval_with(&other, &actor("a", json!({})), &Two));
     }
 
     #[test]

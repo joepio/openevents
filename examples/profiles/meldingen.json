@@ -42,7 +42,6 @@
   ],
   "types": {
     "nl.vng.meldingen.melding": {
-      "allowCommits": false,
       "queryable": [
         "status",
         "categorie",
@@ -152,13 +151,71 @@
           },
           "fotos": {
             "type": "integer"
+          },
+          "gemeld": {
+            "type": "string"
+          },
+          "ingepland": {
+            "type": "object",
+            "properties": {
+              "datum": {
+                "type": "string",
+                "format": "date"
+              },
+              "uitvoerder": {
+                "type": "string"
+              },
+              "toelichting": {
+                "type": "string"
+              }
+            }
+          },
+          "resultaat": {
+            "enum": [
+              "opgelost",
+              "doorgezet naar derde",
+              "dubbele melding",
+              "niet gevonden"
+            ]
+          },
+          "toelichting": {
+            "type": "string"
+          },
+          "afgehandeld": {
+            "type": "object",
+            "properties": {
+              "door": {
+                "type": "string"
+              },
+              "tijd": {
+                "type": "string"
+              }
+            }
+          },
+          "heropenreden": {
+            "type": "string"
+          },
+          "tevredenheid": {
+            "type": "object",
+            "required": [
+              "score"
+            ],
+            "properties": {
+              "score": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5
+              },
+              "opmerking": {
+                "type": "string"
+              }
+            }
           }
         }
       },
       "rules": {
         "read": "melder.partij = actor() OR team = actor('team') OR actor('rol') IN ('kcc', 'systeem', 'inwoner')",
         "create": "melder.partij = actor() OR actor('rol') IN ('kcc', 'systeem')",
-        "append": "melder.partij = actor()",
         "write": "team = actor('team') OR actor('rol') = 'systeem'",
         "fields": [
           {
@@ -175,7 +232,8 @@
               "team",
               "gemeld",
               "ingepland",
-              "afgehandeld"
+              "afgehandeld",
+              "resultaat"
             ]
           },
           {
@@ -193,360 +251,168 @@
           }
         ]
       }
-    }
-  },
-  "events": {
-    "nl.vng.meldingen.melding.gedaan": {
-      "subjectType": "nl.vng.meldingen.melding",
-      "creates": true,
-      "dataschema": {
-        "type": "object",
-        "required": [
-          "zaaknummer",
-          "categorie",
-          "omschrijving",
-          "locatie",
-          "team"
-        ],
-        "properties": {
-          "zaaknummer": {
-            "type": "string"
-          },
-          "categorie": {
-            "type": "string"
-          },
-          "subcategorie": {
-            "type": "string"
-          },
-          "omschrijving": {
-            "type": "string",
-            "minLength": 1
-          },
-          "locatie": {
-            "type": "object",
-            "required": [
-              "type",
-              "coordinates"
-            ],
-            "properties": {
-              "type": {
-                "const": "Point"
-              },
-              "coordinates": {
-                "type": "array",
-                "minItems": 2,
-                "maxItems": 2,
-                "items": {
-                  "type": "number"
-                }
-              }
-            }
-          },
-          "adres": {
-            "type": "string"
-          },
-          "wijk": {
-            "type": "string"
-          },
-          "kanaal": {
-            "enum": [
-              "app",
-              "website",
-              "telefoon",
-              "e-mail"
-            ]
-          },
-          "melder": {
-            "type": "object",
-            "required": [
-              "partij",
-              "rol"
-            ],
-            "properties": {
-              "partij": {
-                "type": "string"
-              },
-              "rol": {
-                "type": "string"
-              }
-            }
-          },
-          "team": {
-            "type": "string"
-          },
-          "prioriteit": {
-            "enum": [
-              "laag",
-              "normaal",
-              "hoog"
-            ]
-          },
-          "fotos": {
-            "type": "integer"
-          }
-        }
-      },
-      "projection": [
-        {
-          "op": "set",
-          "path": "zaaknummer",
-          "value": "$data.zaaknummer"
-        },
-        {
-          "op": "set",
-          "path": "categorie",
-          "value": "$data.categorie"
-        },
-        {
-          "op": "set",
-          "path": "subcategorie",
-          "value": "$data.subcategorie"
-        },
-        {
-          "op": "set",
-          "path": "omschrijving",
-          "value": "$data.omschrijving"
-        },
-        {
-          "op": "set",
-          "path": "locatie",
-          "value": "$data.locatie"
-        },
-        {
-          "op": "set",
-          "path": "adres",
-          "value": "$data.adres"
-        },
-        {
-          "op": "set",
-          "path": "wijk",
-          "value": "$data.wijk"
-        },
-        {
-          "op": "set",
-          "path": "kanaal",
-          "value": "$data.kanaal"
-        },
-        {
-          "op": "set",
-          "path": "melder",
-          "value": "$data.melder"
-        },
-        {
-          "op": "set",
-          "path": "team",
-          "value": "$data.team"
-        },
-        {
-          "op": "set",
-          "path": "prioriteit",
-          "value": "$data.prioriteit"
-        },
-        {
-          "op": "set",
-          "path": "fotos",
-          "value": "$data.fotos"
-        },
-        {
-          "op": "set",
-          "path": "status",
-          "value": "gemeld"
-        },
-        {
-          "op": "set",
-          "path": "gemeld",
-          "value": "$time"
-        }
-      ]
     },
-    "nl.vng.meldingen.melding.toegewezen": {
-      "subjectType": "nl.vng.meldingen.melding",
-      "right": "write",
-      "dataschema": {
+    "nl.vng.meldingen.aanvulling": {
+      "queryable": [
+        "melding",
+        "door",
+        "tijd"
+      ],
+      "schema": {
         "type": "object",
         "required": [
-          "behandelaar"
+          "melding",
+          "tekst",
+          "door",
+          "tijd"
         ],
         "properties": {
-          "behandelaar": {
-            "type": "string"
-          }
-        }
-      },
-      "projection": [
-        {
-          "op": "set",
-          "path": "behandelaar",
-          "value": "$data.behandelaar"
-        },
-        {
-          "op": "set",
-          "path": "status",
-          "value": "in behandeling"
-        }
-      ]
-    },
-    "nl.vng.meldingen.melding.ingepland": {
-      "subjectType": "nl.vng.meldingen.melding",
-      "right": "write",
-      "dataschema": {
-        "type": "object",
-        "required": [
-          "datum"
-        ],
-        "properties": {
-          "datum": {
-            "type": "string",
-            "format": "date"
-          },
-          "uitvoerder": {
+          "melding": {
             "type": "string"
           },
-          "toelichting": {
-            "type": "string"
-          }
-        }
-      },
-      "projection": [
-        {
-          "op": "set",
-          "path": "status",
-          "value": "ingepland"
-        },
-        {
-          "op": "set",
-          "path": "ingepland",
-          "value": {
-            "datum": "$data.datum",
-            "uitvoerder": "$data.uitvoerder"
-          }
-        }
-      ]
-    },
-    "nl.vng.meldingen.melding.aangevuld": {
-      "subjectType": "nl.vng.meldingen.melding",
-      "right": "append",
-      "dataschema": {
-        "type": "object",
-        "required": [
-          "tekst"
-        ],
-        "properties": {
           "tekst": {
             "type": "string",
             "minLength": 1
           },
           "fotos": {
             "type": "integer"
-          }
-        }
-      },
-      "projection": [
-        {
-          "op": "append",
-          "path": "aanvullingen",
-          "value": {
-            "tekst": "$data.tekst",
-            "fotos": "$data.fotos",
-            "tijd": "$time"
-          }
-        }
-      ]
-    },
-    "nl.vng.meldingen.melding.afgehandeld": {
-      "subjectType": "nl.vng.meldingen.melding",
-      "right": "write",
-      "dataschema": {
-        "type": "object",
-        "required": [
-          "resultaat"
-        ],
-        "properties": {
-          "resultaat": {
-            "enum": [
-              "opgelost",
-              "doorgezet naar derde",
-              "dubbele melding",
-              "niet gevonden"
-            ]
           },
-          "toelichting": {
+          "door": {
+            "type": "string"
+          },
+          "tijd": {
             "type": "string"
           }
         }
       },
-      "projection": [
+      "rules": {
+        "read": "melding.melder.partij = actor() OR melding.team = actor('team') OR actor('rol') IN ('kcc', 'systeem')"
+      }
+    }
+  },
+  "actions": {
+    "nl.vng.meldingen.melding.gedaan": {
+      "title": "Melding doen",
+      "commits": [
         {
-          "op": "set",
-          "path": "status",
-          "value": "afgehandeld"
-        },
+          "type": "nl.vng.meldingen.melding",
+          "op": "create",
+          "fields": [
+            "zaaknummer",
+            "categorie",
+            "subcategorie",
+            "omschrijving",
+            "locatie",
+            "adres",
+            "wijk",
+            "kanaal",
+            "melder",
+            "team",
+            "prioriteit",
+            "fotos"
+          ],
+          "set": {
+            "status": "gemeld",
+            "gemeld": "$time"
+          }
+        }
+      ]
+    },
+    "nl.vng.meldingen.melding.toegewezen": {
+      "title": "Toewijzen",
+      "commits": [
         {
-          "op": "set",
-          "path": "afgehandeld",
-          "value": {
+          "type": "nl.vng.meldingen.melding",
+          "op": "update",
+          "fields": [
+            "behandelaar"
+          ],
+          "set": {
+            "status": "in behandeling"
+          }
+        }
+      ]
+    },
+    "nl.vng.meldingen.melding.ingepland": {
+      "title": "Inplannen",
+      "commits": [
+        {
+          "type": "nl.vng.meldingen.melding",
+          "op": "update",
+          "fields": [
+            "ingepland"
+          ],
+          "set": {
+            "status": "ingepland"
+          }
+        }
+      ]
+    },
+    "nl.vng.meldingen.melding.aangevuld": {
+      "title": "Aanvullen",
+      "commits": [
+        {
+          "type": "nl.vng.meldingen.aanvulling",
+          "op": "create",
+          "fields": [
+            "melding",
+            "tekst",
+            "fotos"
+          ],
+          "set": {
             "door": "$actor",
-            "tijd": "$time",
-            "resultaat": "$data.resultaat",
-            "toelichting": "$data.toelichting"
+            "tijd": "$time"
+          },
+          "rule": "melding.melder.partij = actor() AND melding.status <> 'afgehandeld'"
+        }
+      ]
+    },
+    "nl.vng.meldingen.melding.afgehandeld": {
+      "title": "Afhandelen",
+      "commits": [
+        {
+          "type": "nl.vng.meldingen.melding",
+          "op": "update",
+          "fields": [
+            "resultaat",
+            "toelichting"
+          ],
+          "set": {
+            "status": "afgehandeld",
+            "afgehandeld": {
+              "door": "$actor",
+              "tijd": "$time"
+            }
           }
         }
       ]
     },
     "nl.vng.meldingen.melding.heropend": {
-      "subjectType": "nl.vng.meldingen.melding",
-      "right": "append",
-      "dataschema": {
-        "type": "object",
-        "required": [
-          "reden"
-        ],
-        "properties": {
-          "reden": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      },
-      "projection": [
+      "title": "Heropenen",
+      "commits": [
         {
-          "op": "set",
-          "path": "status",
-          "value": "heropend"
-        },
-        {
-          "op": "increment",
-          "path": "heropend"
+          "type": "nl.vng.meldingen.melding",
+          "op": "update",
+          "fields": [
+            "heropenreden"
+          ],
+          "set": {
+            "status": "heropend"
+          },
+          "rule": "melder.partij = actor() AND status = 'afgehandeld'"
         }
       ]
     },
     "nl.vng.meldingen.melding.tevredenheid_gegeven": {
-      "subjectType": "nl.vng.meldingen.melding",
-      "right": "write",
-      "dataschema": {
-        "type": "object",
-        "required": [
-          "score"
-        ],
-        "properties": {
-          "score": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 5
-          },
-          "opmerking": {
-            "type": "string"
-          }
-        }
-      },
-      "projection": [
+      "title": "Tevredenheid geven",
+      "commits": [
         {
-          "op": "set",
-          "path": "tevredenheid",
-          "value": {
-            "score": "$data.score",
-            "opmerking": "$data.opmerking"
-          }
+          "type": "nl.vng.meldingen.melding",
+          "op": "update",
+          "fields": [
+            "tevredenheid"
+          ],
+          "rule": "melder.partij = actor() OR actor('rol') = 'systeem'"
         }
       ]
     }

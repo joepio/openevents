@@ -5,8 +5,8 @@
 De architectuur is CQRS met een eventlog ertussen.
 
 - **Commands** (beslissen of iets mag volgens de domeinregels) vallen **buiten** OpenEvents. Die zitten bij de bronnen: de Gesprekken API, OneGround, Open Zaak, een app, of een kleine domeinservice.
-- **Events** zijn feiten. OpenEvents neemt ze aan en controleert alleen wat nodig is om het log betrouwbaar te houden: schema, schrijfregel, idempotentie en `previousCommit`.
-- **Queries** en de stroom zijn de kern van OpenEvents: projecties, indexen, `/query`, views en SSE.
+- **Events** zijn feiten. OpenEvents neemt ze aan en controleert alleen wat nodig is om het log betrouwbaar te houden: schema, de handeling en haar regel, idempotentie en `previousCommit`. Elk event is een commit op één resource ([ADR-0008](adr/0008-events-zijn-commits.md)).
+- **Queries** en de stroom zijn de kern van OpenEvents: de stand per resource, indexen, `/query`, views en SSE.
 
 Een profiel beschrijft hoe events eruitzien, hoe ze tot een stand leiden en wie wat mag zien, **maar niet wat er moet gebeuren**. Reacties op events (een automatisch antwoord, een gesprek sluiten na 3 dagen, een klantcontact aanmaken) zijn consumers die de stroom volgen en zelf events schrijven.
 
@@ -22,7 +22,7 @@ OpenEvents is een **register per domein** in de zin van [ADR-0006 van het lab](h
  │  ingest: authn, validatie, beleid, transactie              │
  │     │                                                      │
  │     ▼                                                      │
- │  log (append-only, volgnummer)  ──►  projecties (stand)    │
+ │  log (append-only, volgnummer)  ──►  stand (commits toegepast)    │
  │     │                                 │                    │
  │     │                                 ▼                    │
  │     │                           indexen (velden, refs,     │
@@ -42,8 +42,8 @@ OpenEvents is een **register per domein** in de zin van [ADR-0006 van het lab](h
 | **Event** | Een CloudEvent: `id`, `source`, `type`, `subject`, `time`, `dataschema`, `data`. Onveranderlijk, op het versleutelen na (zie [wissen](wissen.md)). |
 | **Onderwerp** (`subject`) | De URI van waar het event over gaat, bijvoorbeeld een gesprek of een zaak. Het onderwerp is de eenheid van ordening, autorisatie en wissen. |
 | **Log** | Alle events op volgorde, met een globaal volgnummer (`sequence`) dat ook de SSE-cursor is. |
-| **Projectie** | De actuele stand van een onderwerp, afgeleid uit zijn events volgens de regels van het profiel. Dit is wat `/query` teruggeeft. |
-| **Profiel** | Een domein op het register: eventtypes, dataschema's, projectieregels en beleid. Zie [profielen](profielen.md). |
+| **Stand** | De actuele stand van een resource: zijn commits na elkaar toegepast (JSON Merge Patch). Dit is wat `/query` teruggeeft. |
+| **Profiel** | Een domein op het register: types, handelingen en regels. Zie [profielen](profielen.md). |
 | **Transactie** | Een JSON Commit: één of meer wijzigingen die samen slagen of samen falen. |
 
 ## Opslag
@@ -57,24 +57,24 @@ Tabellen (prefixes) in de store:
 | `log` | `sequence` | versleuteld event |
 | `subject_log` | `subject` + `sequence` | leeg (index voor de tijdlijn) |
 | `idempotency` | aanroeper + `source` + `id` | resultaat van de eerste aanroep |
-| `projection` | `subject` | actuele stand (JSON), versleuteld |
+| `state` | `subject` | actuele stand (JSON), versleuteld |
 | `head` | `subject` | laatste commit-id (voor `previousCommit`) |
 | `idx_field` | profiel + veld + waarde + `subject` | leeg |
 | `idx_ref` | doel + veld + bron | leeg (omgekeerde verwijzingen, voor paden) |
 | `keys` | `subject` | sleutel voor die onderwerp-inhoud |
 | `profiles` | profiel-id + versie | profieldefinitie |
 
-Alle schrijfacties voor één transactie (log, projectie, indexen, head, idempotentie) gaan in **één** `apply_batch`. Een bevestigde write is duurzaam (eis K1): de store moet bij bevestiging gesynchroniseerd hebben.
+Alle schrijfacties voor één transactie (log, stand, indexen, head, idempotentie) gaan in **één** `apply_batch`. Een bevestigde write is duurzaam (eis K1): de store moet bij bevestiging gesynchroniseerd hebben.
 
 ## Schrijfpad
 
 1. **Authenticatie.** OIDC-token; de agent is een persoon of een systeem (eis A6, A7).
 2. **Parsen.** CloudEvent of JSON Commit-envelop (`type: json.commit.transaction`).
 3. **Idempotentie.** Bestaat aanroeper + `source` + `id` al, dan komt het eerdere resultaat terug.
-4. **Validatie.** Het `type` moet bij een geregistreerd profiel horen; `data` wordt gevalideerd tegen het `dataschema` (eis F11).
-5. **Beleid.** Komt het onderwerp door de `append`- of `write`-regel van het profiel voor deze agent? Dat is een query op dezelfde engine (zie [autorisatie](autorisatie.md)).
+4. **Validatie.** Het `type` moet een handeling van een geregistreerd profiel zijn, elke commit moet bij die handeling passen (type, `create`/`update`/`delete`, toegestane velden), en de nieuwe stand wordt gevalideerd tegen het schema van het type (eis F11).
+5. **Beleid.** Komt de commit door de regel van de handeling (of de `create`- en `write`-regel van het type) voor deze agent? Dat is een query op dezelfde engine (zie [autorisatie](autorisatie.md)).
 6. **Concurrency.** Klopt `previousCommit` met `head`? Zo niet, 412.
-7. **Projectie.** De projectieregels van het profiel berekenen de nieuwe stand. Projectie is puur: hij maakt geen nieuwe events en roept niets buiten het register aan.
+7. **Stand.** De commit wordt toegepast: `resourceData` is de nieuwe stand, een `patch` wordt samengevoegd, met de velden uit `set` erbij. Er zijn geen projectieregels.
 8. **Opslaan.** Eén batch.
 9. **Uitzenden.** Het event gaat naar de interne broadcast; elke SSE-verbinding filtert en autoriseert zelf.
 
@@ -96,7 +96,7 @@ Alles wat een beslissing of neveneffect is (een automatisch antwoord, automatisc
 | `GET` | `/events` | volgen (SSE) of pagineren (JSON) |
 | `POST` | `/events/tickets` | kortlevend ticket voor SSE vanuit de browser |
 | `GET` | `/subjects/{subject}/events` | tijdlijn van één onderwerp |
-| `GET` | `/subjects/{subject}` | projectie van één onderwerp |
+| `GET` | `/subjects/{subject}` | stand van één resource |
 | `POST`, `QUERY` | `/query` | bevragen |
 | `GET` | `/views/{naam}` | benoemde representatie, met alleen niet-gevoelige parameters |
 | `POST` | `/views/{naam}` | benoemde representatie met gevoelige parameters in de body |
@@ -110,7 +110,7 @@ Alles wat een beslissing of neveneffect is (een automatisch antwoord, automatisc
 |---|---|
 | `src/commits.rs`: JSON Commit, idempotentie, `previousCommit`, subject-binding | vrijwel direct over te nemen |
 | SSE met snapshot plus deltas (`get_or_stream_events`) | over te nemen, met `Last-Event-ID` en het token uit de URL |
-| `resource_aggregates`, `resource_heads` | wordt `projection` en `head` |
+| `resource_aggregates`, `resource_heads` | wordt `state` en `head` |
 | Tantivy voor zoeken | optioneel, alleen voor vrije tekst; filters en paden gaan via eigen indexen |
 | `involved`-autorisatie, herkenning van issues aan velden | vervangen door lees- en schrijfregels in het profiel |
 | Rust-types als schema's | vervangen door profielen tijdens runtime |
@@ -125,7 +125,7 @@ Wie een echt zaaksysteem wil maken, krijgt deze rolverdeling:
 | Zaaktype-logica: statusovergangen, verplichte gegevens, besluiten, termijnen | **modules** in de modulehost (command), zie [modules](modules.md) |
 | Wie welke handeling mag doen | de module, voor commands; OpenEvents controleert alleen de schrijfregel |
 | Opslag, geschiedenis, audittrail | **OpenEvents** (log) |
-| Actuele stand van een zaak | OpenEvents (projectie, profiel `zaken`) |
+| Actuele stand van een zaak | OpenEvents (zaakspiegel, profiel `zgw-zaken`) |
 | Werkvoorraad, "mijn zaken", zoeken, kaart, tijdlijn | OpenEvents (`/query`, views, SSE) |
 | Wie wat mag lezen | OpenEvents (leesregels) |
 | Brieven, klantcontact, archief, notificaties | consumers |

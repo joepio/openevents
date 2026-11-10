@@ -9,6 +9,43 @@ fn name(s: &str) -> String {
         .collect()
 }
 
+/// The JSON Schema of one commit an action allows: the resource type's fields, limited
+/// to the ones the client may set.
+fn commit_schema(p: &Value, spec: &Value) -> Value {
+    let type_name = spec["type"].as_str().unwrap_or_default();
+    let props = &p["types"][type_name]["schema"]["properties"];
+    let mut body = json!({ "type": "object" });
+    if let Some(fields) = spec["fields"].as_array() {
+        let mut allowed = Map::new();
+        for f in fields.iter().filter_map(|f| f.as_str()) {
+            allowed.insert(f.into(), props.get(f).cloned().unwrap_or(json!({})));
+        }
+        body["properties"] = Value::Object(allowed);
+        body["additionalProperties"] = json!(false);
+    } else if props.is_object() {
+        body["properties"] = props.clone();
+    }
+    let rid = json!({ "type": "string", "description": "The resource; defaults to the event's subject for a single commit." });
+    let prev = json!({ "type": "string", "description": "Optimistic concurrency: the last commit you saw; 412 when it changed." });
+    let mut out = match spec["op"].as_str() {
+        Some("create") => json!({ "required": ["resourceData"], "properties": {
+            "resourceId": rid, "type": { "const": type_name }, "resourceData": body } }),
+        Some("update") => json!({ "required": ["patch"], "properties": {
+            "resourceId": rid, "previousCommit": prev, "patch": body } }),
+        _ => json!({ "required": ["deleted"], "properties": {
+            "resourceId": rid, "previousCommit": prev, "deleted": { "const": true } } }),
+    };
+    out["type"] = json!("object");
+    out["title"] = json!(format!(
+        "{} {type_name}",
+        spec["op"].as_str().unwrap_or("?")
+    ));
+    if let Some(set) = spec.get("set") {
+        out["description"] = json!(format!("The register sets: {set}"));
+    }
+    out
+}
+
 pub fn for_profile(p: &Value) -> Value {
     let id = p["id"].as_str().unwrap_or_default();
     let mut schemas = Map::new();
@@ -26,7 +63,6 @@ pub fn for_profile(p: &Value) -> Value {
                 "time": { "type": "string", "format": "date-time" },
                 "datacontenttype": { "const": "application/json" },
                 "dataschema": { "type": "string", "format": "uri" },
-                "previouscommit": { "type": "string", "description": "Optimistic concurrency: the head the client saw; 412 when it changed." },
                 "data": {}
             }
         }),
@@ -44,24 +80,23 @@ pub fn for_profile(p: &Value) -> Value {
         }),
     );
     let mut event_refs = Vec::new();
-    if let Some(events) = p["events"].as_object() {
-        let mut names: Vec<_> = events.keys().collect();
+    if let Some(actions) = p["actions"].as_object() {
+        let mut names: Vec<_> = actions.keys().collect();
         names.sort();
         for t in names {
-            let def = &events[t];
-            let n = format!("Event_{}", name(t));
-            let mut desc = format!(
-                "Subject type: {}.",
-                def["subjectType"].as_str().unwrap_or("?")
-            );
-            if def["creates"].as_bool() == Some(true) {
-                desc.push_str(" Creates the subject; the subject must not exist yet.");
-            } else {
-                desc.push_str(&format!(
-                    " Needs the right `{}` on an existing subject.",
-                    def["right"].as_str().unwrap_or("write")
-                ));
+            let def = &actions[t];
+            let n = format!("Action_{}", name(t));
+            let specs: Vec<Value> = def["commits"]
+                .as_array()
+                .map(|list| list.iter().map(|c| commit_schema(p, c)).collect())
+                .unwrap_or_default();
+            let mut desc = String::from(def["title"].as_str().unwrap_or(t));
+            desc.push_str(". `data` is a commit");
+            if specs.len() > 1 {
+                desc.push_str(", or several in `data.commits` (all or nothing)");
             }
+            desc.push_str(". Fields in `set` are filled in by the register.");
+            let commit = json!({ "oneOf": specs });
             schemas.insert(
                 n.clone(),
                 json!({
@@ -70,7 +105,12 @@ pub fn for_profile(p: &Value) -> Value {
                         { "$ref": "#/components/schemas/CloudEvent" },
                         { "type": "object", "required": ["data"], "properties": {
                             "type": { "const": t },
-                            "data": def.get("dataschema").cloned().unwrap_or(json!({}))
+                            "data": { "oneOf": [
+                                commit,
+                                { "type": "object", "required": ["commits"], "properties": {
+                                    "commits": { "type": "array", "minItems": 1, "maxItems": 100, "items": commit }
+                                } }
+                            ] }
                         } }
                     ]
                 }),
@@ -123,7 +163,7 @@ pub fn for_profile(p: &Value) -> Value {
                         "401": problem("No valid token"),
                         "403": problem("Not allowed"),
                         "409": problem("Same source and id, different content"),
-                        "412": problem("previouscommit does not match"),
+                        "412": problem("previousCommit does not match"),
                         "422": problem("Rejected, nothing stored; invalidParams says why")
                     }
                 }

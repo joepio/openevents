@@ -28,7 +28,6 @@
   ],
   "types": {
     "nl.vng.vergunningen.aanvraag": {
-      "allowCommits": false,
       "queryable": [
         "status",
         "zaaknummer",
@@ -142,13 +141,113 @@
           },
           "behandelaar": {
             "type": "string"
+          },
+          "ingediend": {
+            "type": "string"
+          },
+          "ontvankelijk": {
+            "type": "string"
+          },
+          "uiterlijkeBeslisdatum": {
+            "type": "string",
+            "format": "date"
+          },
+          "verlengd": {
+            "type": "boolean"
+          },
+          "verlengingsreden": {
+            "type": "string"
+          },
+          "aanvullingGevraagd": {
+            "type": "object",
+            "required": [
+              "gevraagd"
+            ],
+            "properties": {
+              "gevraagd": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string"
+                }
+              },
+              "termijnTot": {
+                "type": "string",
+                "format": "date"
+              },
+              "toelichting": {
+                "type": "string"
+              }
+            }
+          },
+          "aanvullingOntvangen": {
+            "type": "object",
+            "properties": {
+              "bijlagen": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "toelichting": {
+                "type": "string"
+              }
+            }
+          },
+          "besluit": {
+            "type": "object",
+            "required": [
+              "uitkomst"
+            ],
+            "properties": {
+              "uitkomst": {
+                "enum": [
+                  "verleend",
+                  "verleend met voorschriften",
+                  "geweigerd",
+                  "buiten behandeling"
+                ]
+              },
+              "voorschriften": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "bezwaartermijnTot": {
+                "type": "string",
+                "format": "date"
+              },
+              "toelichting": {
+                "type": "string"
+              }
+            }
+          },
+          "besloten": {
+            "type": "string"
+          },
+          "bekendgemaakt": {
+            "type": "boolean"
+          },
+          "bekendmaking": {
+            "type": "object",
+            "properties": {
+              "publicatie": {
+                "type": "string"
+              }
+            }
+          },
+          "intrekkingsreden": {
+            "type": "string"
+          },
+          "ingetrokken": {
+            "type": "string"
           }
         }
       },
       "rules": {
         "read": "aanvrager.partij = actor() OR gemachtigde = actor() OR team = actor('team') OR actor('rol') IN ('kcc', 'systeem') OR bekendgemaakt = true",
         "create": "aanvrager.partij = actor() OR actor('rol') = 'systeem'",
-        "append": "(aanvrager.partij = actor() OR gemachtigde = actor()) AND status = 'aanvulling gevraagd'",
         "write": "team = actor('team') OR actor('rol') = 'systeem'",
         "fields": [
           {
@@ -161,7 +260,8 @@
               "wijk",
               "ingediend",
               "uiterlijkeBeslisdatum",
-              "besluit"
+              "besluit",
+              "besloten"
             ]
           },
           {
@@ -178,346 +278,27 @@
           }
         ]
       }
-    }
-  },
-  "events": {
-    "nl.vng.vergunningen.aanvraag.ingediend": {
-      "subjectType": "nl.vng.vergunningen.aanvraag",
-      "creates": true,
-      "dataschema": {
+    },
+    "nl.vng.vergunningen.advies": {
+      "queryable": [
+        "aanvraag",
+        "adviseur",
+        "uitkomst"
+      ],
+      "schema": {
         "type": "object",
         "required": [
-          "zaaknummer",
-          "activiteiten",
-          "omschrijving",
-          "aanvrager"
-        ],
-        "properties": {
-          "zaaknummer": {
-            "type": "string"
-          },
-          "verzoeknummer": {
-            "type": "string"
-          },
-          "activiteiten": {
-            "type": "array",
-            "minItems": 1,
-            "items": {
-              "type": "string"
-            }
-          },
-          "omschrijving": {
-            "type": "string",
-            "minLength": 1
-          },
-          "procedure": {
-            "enum": [
-              "regulier",
-              "uitgebreid"
-            ]
-          },
-          "locatie": {
-            "type": "object",
-            "required": [
-              "type",
-              "coordinates"
-            ],
-            "properties": {
-              "type": {
-                "const": "Point"
-              },
-              "coordinates": {
-                "type": "array",
-                "minItems": 2,
-                "maxItems": 2,
-                "items": {
-                  "type": "number"
-                }
-              }
-            }
-          },
-          "adres": {
-            "type": "string"
-          },
-          "wijk": {
-            "type": "string"
-          },
-          "kadastraal": {
-            "type": "string"
-          },
-          "aanvrager": {
-            "type": "object",
-            "required": [
-              "partij",
-              "rol"
-            ],
-            "properties": {
-              "partij": {
-                "type": "string"
-              },
-              "rol": {
-                "type": "string"
-              }
-            }
-          },
-          "gemachtigde": {
-            "type": "string"
-          },
-          "bouwkosten": {
-            "type": "integer"
-          },
-          "bijlagen": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        }
-      },
-      "projection": [
-        {
-          "op": "set",
-          "path": "zaaknummer",
-          "value": "$data.zaaknummer"
-        },
-        {
-          "op": "set",
-          "path": "verzoeknummer",
-          "value": "$data.verzoeknummer"
-        },
-        {
-          "op": "set",
-          "path": "activiteiten",
-          "value": "$data.activiteiten"
-        },
-        {
-          "op": "set",
-          "path": "omschrijving",
-          "value": "$data.omschrijving"
-        },
-        {
-          "op": "set",
-          "path": "procedure",
-          "value": "$data.procedure"
-        },
-        {
-          "op": "set",
-          "path": "locatie",
-          "value": "$data.locatie"
-        },
-        {
-          "op": "set",
-          "path": "adres",
-          "value": "$data.adres"
-        },
-        {
-          "op": "set",
-          "path": "wijk",
-          "value": "$data.wijk"
-        },
-        {
-          "op": "set",
-          "path": "kadastraal",
-          "value": "$data.kadastraal"
-        },
-        {
-          "op": "set",
-          "path": "aanvrager",
-          "value": "$data.aanvrager"
-        },
-        {
-          "op": "set",
-          "path": "gemachtigde",
-          "value": "$data.gemachtigde"
-        },
-        {
-          "op": "set",
-          "path": "bouwkosten",
-          "value": "$data.bouwkosten"
-        },
-        {
-          "op": "set",
-          "path": "bijlagen",
-          "value": "$data.bijlagen"
-        },
-        {
-          "op": "set",
-          "path": "team",
-          "value": "vergunningen"
-        },
-        {
-          "op": "set",
-          "path": "status",
-          "value": "ingediend"
-        },
-        {
-          "op": "set",
-          "path": "ingediend",
-          "value": "$time"
-        }
-      ]
-    },
-    "nl.vng.vergunningen.aanvraag.ontvankelijk_verklaard": {
-      "subjectType": "nl.vng.vergunningen.aanvraag",
-      "right": "write",
-      "dataschema": {
-        "type": "object",
-        "required": [
-          "behandelaar",
-          "uiterlijkeBeslisdatum"
-        ],
-        "properties": {
-          "behandelaar": {
-            "type": "string"
-          },
-          "uiterlijkeBeslisdatum": {
-            "type": "string",
-            "format": "date"
-          },
-          "toelichting": {
-            "type": "string"
-          }
-        }
-      },
-      "projection": [
-        {
-          "op": "set",
-          "path": "behandelaar",
-          "value": "$data.behandelaar"
-        },
-        {
-          "op": "set",
-          "path": "uiterlijkeBeslisdatum",
-          "value": "$data.uiterlijkeBeslisdatum"
-        },
-        {
-          "op": "set",
-          "path": "status",
-          "value": "in behandeling"
-        },
-        {
-          "op": "set",
-          "path": "ontvankelijk",
-          "value": "$time"
-        }
-      ]
-    },
-    "nl.vng.vergunningen.aanvraag.aanvulling_gevraagd": {
-      "subjectType": "nl.vng.vergunningen.aanvraag",
-      "right": "write",
-      "dataschema": {
-        "type": "object",
-        "required": [
-          "gevraagd"
-        ],
-        "properties": {
-          "gevraagd": {
-            "type": "array",
-            "minItems": 1,
-            "items": {
-              "type": "string"
-            }
-          },
-          "termijnTot": {
-            "type": "string",
-            "format": "date"
-          },
-          "toelichting": {
-            "type": "string"
-          }
-        }
-      },
-      "projection": [
-        {
-          "op": "set",
-          "path": "status",
-          "value": "aanvulling gevraagd"
-        },
-        {
-          "op": "append",
-          "path": "aanvullingen",
-          "value": {
-            "gevraagd": "$data.gevraagd",
-            "termijnTot": "$data.termijnTot",
-            "tijd": "$time"
-          }
-        }
-      ]
-    },
-    "nl.vng.vergunningen.aanvraag.aanvulling_ontvangen": {
-      "subjectType": "nl.vng.vergunningen.aanvraag",
-      "right": "append",
-      "dataschema": {
-        "type": "object",
-        "required": [],
-        "properties": {
-          "bijlagen": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "toelichting": {
-            "type": "string"
-          }
-        }
-      },
-      "projection": [
-        {
-          "op": "set",
-          "path": "status",
-          "value": "in behandeling"
-        },
-        {
-          "op": "append",
-          "path": "ontvangenAanvullingen",
-          "value": {
-            "tijd": "$time",
-            "bijlagen": "$data.bijlagen"
-          }
-        }
-      ]
-    },
-    "nl.vng.vergunningen.aanvraag.advies_gevraagd": {
-      "subjectType": "nl.vng.vergunningen.aanvraag",
-      "right": "write",
-      "dataschema": {
-        "type": "object",
-        "required": [
+          "aanvraag",
           "adviseur"
         ],
         "properties": {
+          "aanvraag": {
+            "type": "string"
+          },
           "adviseur": {
             "type": "string"
           },
           "vraag": {
-            "type": "string"
-          }
-        }
-      },
-      "projection": [
-        {
-          "op": "append",
-          "path": "adviesvragen",
-          "value": {
-            "adviseur": "$data.adviseur",
-            "vraag": "$data.vraag",
-            "tijd": "$time"
-          }
-        }
-      ]
-    },
-    "nl.vng.vergunningen.aanvraag.advies_ontvangen": {
-      "subjectType": "nl.vng.vergunningen.aanvraag",
-      "right": "write",
-      "dataschema": {
-        "type": "object",
-        "required": [
-          "adviseur",
-          "uitkomst"
-        ],
-        "properties": {
-          "adviseur": {
             "type": "string"
           },
           "uitkomst": {
@@ -529,155 +310,192 @@
           },
           "toelichting": {
             "type": "string"
+          },
+          "gevraagd": {
+            "type": "string"
+          },
+          "ontvangen": {
+            "type": "string"
           }
         }
       },
-      "projection": [
+      "rules": {
+        "read": "aanvraag.team = actor('team') OR actor('rol') IN ('kcc', 'systeem')"
+      }
+    }
+  },
+  "actions": {
+    "nl.vng.vergunningen.aanvraag.ingediend": {
+      "title": "Aanvraag indienen",
+      "commits": [
         {
-          "op": "append",
-          "path": "adviezen",
-          "value": {
-            "adviseur": "$data.adviseur",
-            "uitkomst": "$data.uitkomst",
-            "toelichting": "$data.toelichting",
-            "tijd": "$time"
+          "type": "nl.vng.vergunningen.aanvraag",
+          "op": "create",
+          "fields": [
+            "zaaknummer",
+            "verzoeknummer",
+            "activiteiten",
+            "omschrijving",
+            "procedure",
+            "locatie",
+            "adres",
+            "wijk",
+            "kadastraal",
+            "aanvrager",
+            "gemachtigde",
+            "bouwkosten",
+            "bijlagen"
+          ],
+          "set": {
+            "team": "vergunningen",
+            "status": "ingediend",
+            "ingediend": "$time"
           }
+        }
+      ]
+    },
+    "nl.vng.vergunningen.aanvraag.ontvankelijk_verklaard": {
+      "title": "Ontvankelijk verklaren",
+      "commits": [
+        {
+          "type": "nl.vng.vergunningen.aanvraag",
+          "op": "update",
+          "fields": [
+            "behandelaar",
+            "uiterlijkeBeslisdatum"
+          ],
+          "set": {
+            "status": "in behandeling",
+            "ontvankelijk": "$time"
+          }
+        }
+      ]
+    },
+    "nl.vng.vergunningen.aanvraag.aanvulling_gevraagd": {
+      "title": "Aanvulling vragen",
+      "commits": [
+        {
+          "type": "nl.vng.vergunningen.aanvraag",
+          "op": "update",
+          "fields": [
+            "aanvullingGevraagd"
+          ],
+          "set": {
+            "status": "aanvulling gevraagd"
+          }
+        }
+      ]
+    },
+    "nl.vng.vergunningen.aanvraag.aanvulling_ontvangen": {
+      "title": "Aanvulling aanleveren",
+      "commits": [
+        {
+          "type": "nl.vng.vergunningen.aanvraag",
+          "op": "update",
+          "fields": [
+            "aanvullingOntvangen"
+          ],
+          "set": {
+            "status": "in behandeling"
+          },
+          "rule": "(aanvrager.partij = actor() OR gemachtigde = actor()) AND status = 'aanvulling gevraagd'"
+        }
+      ]
+    },
+    "nl.vng.vergunningen.aanvraag.advies_gevraagd": {
+      "title": "Advies vragen",
+      "commits": [
+        {
+          "type": "nl.vng.vergunningen.advies",
+          "op": "create",
+          "fields": [
+            "aanvraag",
+            "adviseur",
+            "vraag"
+          ],
+          "set": {
+            "gevraagd": "$time"
+          },
+          "rule": "aanvraag.team = actor('team')"
+        }
+      ]
+    },
+    "nl.vng.vergunningen.aanvraag.advies_ontvangen": {
+      "title": "Advies vastleggen",
+      "commits": [
+        {
+          "type": "nl.vng.vergunningen.advies",
+          "op": "update",
+          "fields": [
+            "uitkomst",
+            "toelichting"
+          ],
+          "set": {
+            "ontvangen": "$time"
+          },
+          "rule": "aanvraag.team = actor('team')"
         }
       ]
     },
     "nl.vng.vergunningen.aanvraag.termijn_verlengd": {
-      "subjectType": "nl.vng.vergunningen.aanvraag",
-      "right": "write",
-      "dataschema": {
-        "type": "object",
-        "required": [
-          "uiterlijkeBeslisdatum"
-        ],
-        "properties": {
-          "uiterlijkeBeslisdatum": {
-            "type": "string",
-            "format": "date"
-          },
-          "reden": {
-            "type": "string"
+      "title": "Termijn verlengen",
+      "commits": [
+        {
+          "type": "nl.vng.vergunningen.aanvraag",
+          "op": "update",
+          "fields": [
+            "uiterlijkeBeslisdatum",
+            "verlengingsreden"
+          ],
+          "set": {
+            "verlengd": true
           }
-        }
-      },
-      "projection": [
-        {
-          "op": "set",
-          "path": "uiterlijkeBeslisdatum",
-          "value": "$data.uiterlijkeBeslisdatum"
-        },
-        {
-          "op": "set",
-          "path": "verlengd",
-          "value": true
         }
       ]
     },
     "nl.vng.vergunningen.aanvraag.besloten": {
-      "subjectType": "nl.vng.vergunningen.aanvraag",
-      "right": "write",
-      "dataschema": {
-        "type": "object",
-        "required": [
-          "uitkomst"
-        ],
-        "properties": {
-          "uitkomst": {
-            "enum": [
-              "verleend",
-              "verleend met voorschriften",
-              "geweigerd",
-              "buiten behandeling"
-            ]
-          },
-          "voorschriften": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "bezwaartermijnTot": {
-            "type": "string",
-            "format": "date"
-          },
-          "toelichting": {
-            "type": "string"
-          }
-        }
-      },
-      "projection": [
+      "title": "Besluiten",
+      "commits": [
         {
-          "op": "set",
-          "path": "status",
-          "value": "besloten"
-        },
-        {
-          "op": "set",
-          "path": "besluit",
-          "value": {
-            "uitkomst": "$data.uitkomst",
-            "voorschriften": "$data.voorschriften",
-            "bezwaartermijnTot": "$data.bezwaartermijnTot",
-            "datum": "$time"
+          "type": "nl.vng.vergunningen.aanvraag",
+          "op": "update",
+          "fields": [
+            "besluit"
+          ],
+          "set": {
+            "status": "besloten",
+            "besloten": "$time"
           }
         }
       ]
     },
     "nl.vng.vergunningen.aanvraag.bekendgemaakt": {
-      "subjectType": "nl.vng.vergunningen.aanvraag",
-      "right": "write",
-      "dataschema": {
-        "type": "object",
-        "required": [],
-        "properties": {
-          "publicatie": {
-            "type": "string"
-          }
-        }
-      },
-      "projection": [
+      "title": "Bekendmaken",
+      "commits": [
         {
-          "op": "set",
-          "path": "bekendgemaakt",
-          "value": true
-        },
-        {
-          "op": "set",
-          "path": "bekendmaking",
-          "value": {
-            "publicatie": "$data.publicatie",
-            "tijd": "$time"
+          "type": "nl.vng.vergunningen.aanvraag",
+          "op": "update",
+          "fields": [
+            "bekendmaking"
+          ],
+          "set": {
+            "bekendgemaakt": true
           }
         }
       ]
     },
     "nl.vng.vergunningen.aanvraag.ingetrokken": {
-      "subjectType": "nl.vng.vergunningen.aanvraag",
-      "right": "write",
-      "dataschema": {
-        "type": "object",
-        "required": [],
-        "properties": {
-          "reden": {
-            "type": "string"
-          }
-        }
-      },
-      "projection": [
+      "title": "Intrekken",
+      "commits": [
         {
-          "op": "set",
-          "path": "status",
-          "value": "ingetrokken"
-        },
-        {
-          "op": "set",
-          "path": "ingetrokken",
-          "value": {
-            "tijd": "$time",
-            "reden": "$data.reden"
+          "type": "nl.vng.vergunningen.aanvraag",
+          "op": "update",
+          "fields": [
+            "intrekkingsreden"
+          ],
+          "set": {
+            "status": "ingetrokken",
+            "ingetrokken": "$time"
           }
         }
       ]

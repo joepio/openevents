@@ -112,17 +112,29 @@ async fn start_gesprek(app: &Router) {
             "e1",
             "nl.vng.gesprekken.gesprek.gestart",
             G1,
-            json!({
+            json!({ "type": "nl.vng.gesprekken.gesprek", "resourceData": {
                 "onderwerp": "Vraag over mijn aanvraag",
                 "team": "wmo",
                 "aanleiding": { "zaak": "https://zaken.example.nl/zaken/1" },
-                "initiatiefnemer": { "partij": SUZANNE_ID, "rol": "inwoner" }
-            }),
+                "deelnames": [ { "partij": SUZANNE_ID, "rol": "inwoner" } ]
+            } }),
         )),
     )
     .await;
     assert_eq!(s, StatusCode::CREATED, "{b}");
 }
+
+/// A bijdrage is its own resource that points at its gesprek (ADR-0008).
+fn bijdrage(id: &str, subject: &str, tekst: Value) -> Value {
+    ev(
+        id,
+        "nl.vng.gesprekken.bijdrage.toegevoegd",
+        subject,
+        json!({ "resourceData": { "gesprek": G1, "tekst": tekst } }),
+    )
+}
+
+const B1: &str = "urn:uuid:bijdrage-1";
 
 #[tokio::test]
 async fn profiles_need_an_admin() {
@@ -160,7 +172,9 @@ async fn read_rules_decide_who_sees_a_gesprek() {
     let (s, b, _) = call(&app, "GET", &uri, Some(SUZANNE), None).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(b["status"], "open");
-    assert_eq!(b["rollen"]["inwoner"][0], SUZANNE_ID);
+    assert_eq!(b["deelnames"][0]["partij"], SUZANNE_ID);
+    // `set` in the action: the register fills in status and gestart.
+    assert!(b["gestart"].is_string());
     // A stranger gets the same answer as for something that does not exist.
     let (s, _, _) = call(&app, "GET", &uri, Some(KAREL), None).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
@@ -170,82 +184,63 @@ async fn read_rules_decide_who_sees_a_gesprek() {
 }
 
 #[tokio::test]
-async fn write_rules_schema_and_projection() {
+async fn actions_decide_what_a_commit_may_do() {
     let app = app();
     install(&app).await;
     start_gesprek(&app).await;
 
-    let bijdrage = |id: &str, tekst: Value| {
-        ev(
-            id,
-            "nl.vng.gesprekken.bijdrage.toegevoegd",
-            G1,
-            json!({ "tekst": tekst }),
-        )
+    let post = |token: &'static str, e: Value| {
+        let app = app.clone();
+        async move { call(&app, "POST", "/events", Some(token), Some(e)).await }
     };
-    let (s, _, _) = call(
-        &app,
-        "POST",
-        "/events",
-        Some(SUZANNE),
-        Some(bijdrage("e2", json!("Hallo"))),
-    )
-    .await;
-    assert_eq!(s, StatusCode::CREATED);
-    let (s, _, _) = call(
-        &app,
-        "POST",
-        "/events",
-        Some(KAREL),
-        Some(bijdrage("e3", json!("Ik ook"))),
-    )
-    .await;
+    let (s, b, _) = post(SUZANNE, bijdrage("e2", B1, json!("Hallo"))).await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    // Karel is not in the gesprek: the rule follows `gesprek` to check the deelnames.
+    let (s, _, _) = post(KAREL, bijdrage("e3", "urn:uuid:b-karel", json!("Ik ook"))).await;
     assert_eq!(s, StatusCode::FORBIDDEN);
-    let (s, b, _) = call(
-        &app,
-        "POST",
-        "/events",
-        Some(SUZANNE),
-        Some(bijdrage("e4", json!(42))),
-    )
-    .await;
+    let (s, b, _) = post(SUZANNE, bijdrage("e4", "urn:uuid:b-4", json!(42))).await;
     assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(b["invalidParams"][0]["code"], "schema");
-
-    // Unknown types and missing fields are rejected.
-    let (s, _, _) = call(
-        &app,
-        "POST",
-        "/events",
-        Some(SUZANNE),
-        Some(ev("e5", "nl.vng.onbekend", G1, json!({}))),
+    // The server sets `door`; the client may not.
+    let (s, b, _) = post(SUZANNE, ev("e4b", "nl.vng.gesprekken.bijdrage.toegevoegd", "urn:uuid:b-4b",
+        json!({ "resourceData": { "gesprek": G1, "tekst": "x", "door": "https://id.example.nl/iemand" } }))).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(b["invalidParams"][0]["code"], "field-not-allowed");
+    // An action only allows the commits it lists: no patching a gesprek with a bijdrage.
+    let (s, b, _) = post(
+        SUZANNE,
+        ev(
+            "e4c",
+            "nl.vng.gesprekken.bijdrage.toegevoegd",
+            G1,
+            json!({ "patch": { "status": "afgesloten" } }),
+        ),
     )
     .await;
     assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(b["invalidParams"][0]["code"], "not-allowed");
+    // A create of something that exists is refused.
+    let (s, b, _) = post(SUZANNE, bijdrage("e4d", B1, json!("Nog eens"))).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(b["invalidParams"][0]["code"], "exists");
 
-    // After closing, the inwoner can no longer add (append rule checks status).
-    let (s, _, _) = call(
-        &app,
-        "POST",
-        "/events",
-        Some(SUZANNE),
-        Some(ev(
+    // Unknown types are rejected.
+    let (s, _, _) = post(SUZANNE, ev("e5", "nl.vng.onbekend", G1, json!({}))).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // Closing sets status and who closed it; after that no more bijdragen.
+    let (s, b, _) = post(
+        SUZANNE,
+        ev(
             "e6",
             "nl.vng.gesprekken.gesprek.afgesloten",
             G1,
-            json!({ "reden": "beantwoord" }),
-        )),
+            json!({ "patch": { "afsluitreden": "beantwoord" } }),
+        ),
     )
     .await;
-    assert_eq!(s, StatusCode::CREATED);
-    let (s, _, _) = call(
-        &app,
-        "POST",
-        "/events",
-        Some(SUZANNE),
-        Some(bijdrage("e7", json!("Nog iets"))),
-    )
-    .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let (s, _, _) = post(SUZANNE, bijdrage("e7", "urn:uuid:b-7", json!("Nog iets"))).await;
     assert_eq!(s, StatusCode::FORBIDDEN);
 
     let (_, b, _) = call(
@@ -256,14 +251,124 @@ async fn write_rules_schema_and_projection() {
         None,
     )
     .await;
-    assert_eq!(b["aantalBijdragen"], 1);
-    assert_eq!(b["bijdragen"][0]["tekst"], "Hallo");
     assert_eq!(b["status"], "afgesloten");
-    // Gesprekken only accept their own event types, not generic commits.
+    assert_eq!(b["afgesloten"]["door"], SUZANNE_ID);
+    assert_eq!(b["afsluitreden"], "beantwoord");
+    // What used to be a projection (bijdragen, aantal) is a query.
+    let (s, b, _) = call(
+        &app,
+        "POST",
+        "/query",
+        Some(SUZANNE),
+        Some(
+            json!({ "type": "nl.vng.gesprekken.bijdrage", "filter": format!("gesprek = '{G1}'") }),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(b["results"].as_array().unwrap().len(), 1);
+    assert_eq!(b["results"][0]["tekst"], "Hallo");
+    assert_eq!(b["results"][0]["door"], SUZANNE_ID);
+    // The event in the log: the action as type, the bijdrage as subject, the commit as data.
+    let (_, b, _) = call(
+        &app,
+        "GET",
+        &format!("/subjects/{}/events", enc(B1)),
+        Some(SUZANNE),
+        None,
+    )
+    .await;
+    let e = &b["events"][0];
+    assert_eq!(e["type"], "nl.vng.gesprekken.bijdrage.toegevoegd");
+    assert_eq!(e["data"]["type"], "nl.vng.gesprekken.bijdrage");
+    assert_eq!(e["data"]["resourceData"]["door"], SUZANNE_ID);
+    // Gesprekken only accept their actions, not bare commits.
     let commit = json!({ "specversion": "1.0", "id": "c1", "source": "urn:test", "type": "json.commit", "subject": G1,
         "data": { "resourceId": G1, "patch": { "status": "open" } } });
-    let (s, b, _) = call(&app, "POST", "/events", Some(SUZANNE), Some(commit)).await;
+    let (s, b, _) = post(SUZANNE, commit).await;
     assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{b}");
+    assert_eq!(b["invalidParams"][0]["code"], "commits-not-allowed");
+}
+
+/// One action, two commits: start a gesprek with its first bijdrage, all or nothing.
+/// Then filters that follow the reference from bijdrage to gesprek.
+#[tokio::test]
+async fn one_action_many_commits_and_references() {
+    let app = app();
+    install(&app).await;
+    let g = "urn:uuid:gesprek-2";
+    let start = |id: &str, tekst: Value| {
+        ev(
+            id,
+            "nl.vng.gesprekken.gesprek.gestart",
+            g,
+            json!({ "commits": [
+        { "resourceId": g, "type": "nl.vng.gesprekken.gesprek", "resourceData": {
+            "onderwerp": "Traplift", "team": "wmo", "deelnames": [ { "partij": SUZANNE_ID, "rol": "inwoner" } ] } },
+        { "resourceId": "urn:uuid:b-eerste", "type": "nl.vng.gesprekken.bijdrage",
+          "resourceData": { "gesprek": g, "tekst": tekst } }
+    ] }),
+        )
+    };
+    let (s, _, _) = call(
+        &app,
+        "POST",
+        "/events",
+        Some(SUZANNE),
+        Some(start("s1", json!(1))),
+    )
+    .await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+    let (s, _, _) = call(
+        &app,
+        "GET",
+        &format!("/subjects/{}", enc(g)),
+        Some(SUZANNE),
+        None,
+    )
+    .await;
+    assert_eq!(
+        s,
+        StatusCode::NOT_FOUND,
+        "nothing of a rejected action is stored"
+    );
+    // The bijdrage's rule sees the gesprek created earlier in the same request.
+    let (s, b, _) = call(
+        &app,
+        "POST",
+        "/events",
+        Some(SUZANNE),
+        Some(start("s2", json!("Hoe vraag ik een traplift aan?"))),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    assert_eq!(b["events"][1]["id"], "s2:1");
+
+    let q = |filter: &str| json!({ "type": "nl.vng.gesprekken.bijdrage", "filter": filter });
+    let (s, b, _) = call(
+        &app,
+        "POST",
+        "/query",
+        Some(MERVE),
+        Some(q(
+            "gesprek.onderwerp = 'Traplift' AND gesprek.status = 'open'",
+        )),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(b["results"].as_array().unwrap().len(), 1);
+    let (_, b, _) = call(
+        &app,
+        "POST",
+        "/query",
+        Some(KAREL),
+        Some(q("gesprek.onderwerp = 'Traplift'")),
+    )
+    .await;
+    assert_eq!(b["results"].as_array().unwrap().len(), 0);
+    // Not queryable: a field of the bijdrage that is not listed.
+    let (s, _, _) = call(&app, "POST", "/query", Some(MERVE), Some(q("tekst = 'x'"))).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test]
@@ -271,12 +376,7 @@ async fn idempotency_and_previous_commit() {
     let app = app();
     install(&app).await;
     start_gesprek(&app).await;
-    let e = ev(
-        "e2",
-        "nl.vng.gesprekken.bijdrage.toegevoegd",
-        G1,
-        json!({ "tekst": "Hallo" }),
-    );
+    let e = bijdrage("e2", B1, json!("Hallo"));
     let (s, first, _) = call(&app, "POST", "/events", Some(SUZANNE), Some(e.clone())).await;
     assert_eq!(s, StatusCode::CREATED);
     let (s, again, h) = call(&app, "POST", "/events", Some(SUZANNE), Some(e.clone())).await;
@@ -284,34 +384,25 @@ async fn idempotency_and_previous_commit() {
     assert_eq!(first, again);
     assert_eq!(h.get("idempotent-replayed").unwrap(), "true");
     // Same id, other body: conflict. Same id, other caller: conflict, without the response.
-    let other = ev(
-        "e2",
-        "nl.vng.gesprekken.bijdrage.toegevoegd",
-        G1,
-        json!({ "tekst": "Anders" }),
-    );
+    let other = bijdrage("e2", B1, json!("Anders"));
     let (s, _, _) = call(&app, "POST", "/events", Some(SUZANNE), Some(other)).await;
     assert_eq!(s, StatusCode::CONFLICT);
     let (s, b, _) = call(&app, "POST", "/events", Some(MERVE), Some(e)).await;
     assert_eq!(s, StatusCode::CONFLICT);
     assert!(b.get("events").is_none());
 
-    let mut stale = ev(
-        "e3",
-        "nl.vng.gesprekken.bijdrage.toegevoegd",
-        G1,
-        json!({ "tekst": "Oud" }),
-    );
-    stale["previouscommit"] = json!("e1");
+    let sluit = |id: &str, prev: &str| {
+        ev(
+            id,
+            "nl.vng.gesprekken.gesprek.afgesloten",
+            G1,
+            json!({ "patch": {}, "previousCommit": prev }),
+        )
+    };
+    let stale = sluit("e3", "e0");
     let (s, _, _) = call(&app, "POST", "/events", Some(SUZANNE), Some(stale)).await;
     assert_eq!(s, StatusCode::PRECONDITION_FAILED);
-    let mut fresh = ev(
-        "e4",
-        "nl.vng.gesprekken.bijdrage.toegevoegd",
-        G1,
-        json!({ "tekst": "Nieuw" }),
-    );
-    fresh["previouscommit"] = json!("e2");
+    let fresh = sluit("e4", "e1");
     let (s, _, _) = call(&app, "POST", "/events", Some(SUZANNE), Some(fresh)).await;
     assert_eq!(s, StatusCode::CREATED);
 }
@@ -496,12 +587,7 @@ async fn event_listing_and_timeline_follow_read_rules() {
         "POST",
         "/events",
         Some(SUZANNE),
-        Some(ev(
-            "e2",
-            "nl.vng.gesprekken.bijdrage.toegevoegd",
-            G1,
-            json!({ "tekst": "Hallo" }),
-        )),
+        Some(bijdrage("e2", B1, json!("Hallo"))),
     )
     .await;
 
@@ -530,7 +616,8 @@ async fn event_listing_and_timeline_follow_read_rules() {
     )
     .await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(b["events"].as_array().unwrap().len(), 2);
+    // The bijdrage is its own resource with its own timeline.
+    assert_eq!(b["events"].as_array().unwrap().len(), 1);
     let (s, _, _) = call(
         &app,
         "GET",
@@ -607,12 +694,7 @@ async fn sse_catches_up_from_last_event_id_then_goes_live() {
             "POST",
             "/events",
             Some(SUZANNE),
-            Some(ev(
-                "e2",
-                "nl.vng.gesprekken.bijdrage.toegevoegd",
-                G1,
-                json!({ "tekst": "Live" }),
-            )),
+            Some(bijdrage("e2", B1, json!("Live"))),
         )
         .await;
     };
@@ -627,7 +709,7 @@ async fn sse_catches_up_from_last_event_id_then_goes_live() {
     .await;
     assert_eq!(events[0]["id"], "e1");
     assert_eq!(events[1]["id"], "e2");
-    assert_eq!(events[1]["data"]["tekst"], "Live");
+    assert_eq!(events[1]["data"]["resourceData"]["tekst"], "Live");
 }
 
 #[tokio::test]
@@ -722,12 +804,7 @@ async fn everything_survives_a_restart() {
         "POST",
         "/events",
         Some(SUZANNE),
-        Some(ev(
-            "e2",
-            "nl.vng.gesprekken.bijdrage.toegevoegd",
-            G1,
-            json!({ "tekst": "Na herstart" }),
-        )),
+        Some(bijdrage("e2", B1, json!("Na herstart"))),
     )
     .await;
     assert_eq!(s, StatusCode::CREATED);
@@ -748,9 +825,9 @@ async fn optional_fields_may_be_left_out() {
             "e1",
             "nl.vng.gesprekken.gesprek.gestart",
             G1,
-            json!({
-                "onderwerp": "Kort", "initiatiefnemer": { "partij": SUZANNE_ID, "rol": "inwoner" }
-            }),
+            json!({ "type": "nl.vng.gesprekken.gesprek", "resourceData": {
+                "onderwerp": "Kort", "deelnames": [ { "partij": SUZANNE_ID, "rol": "inwoner" } ]
+            } }),
         )),
     )
     .await;
@@ -778,12 +855,7 @@ async fn field_rules_limit_what_kcc_sees() {
         "POST",
         "/events",
         Some(SUZANNE),
-        Some(ev(
-            "e2",
-            "nl.vng.gesprekken.bijdrage.toegevoegd",
-            G1,
-            json!({ "tekst": "Geheim" }),
-        )),
+        Some(bijdrage("e2", B1, json!("Geheim"))),
     )
     .await;
 
@@ -797,13 +869,23 @@ async fn field_rules_limit_what_kcc_sees() {
     .await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(b["onderwerp"], "Vraag over mijn aanvraag");
-    assert!(b.get("bijdragen").is_none() && b.get("deelnames").is_none());
+    assert!(b.get("deelnames").is_none());
     assert_eq!(b["_meta"]["limited"], true);
+    // The bijdrage itself is not for the KCC at all.
+    let (s, _, _) = call(
+        &app,
+        "GET",
+        &format!("/subjects/{}", enc(B1)),
+        Some(KIM),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
 
     let (_, b, _) = call(&app, "GET", "/events?format=json", Some(KIM), None).await;
-    assert_eq!(b["events"].as_array().unwrap().len(), 2);
-    assert!(b["events"][1].get("data").is_none());
-    assert_eq!(b["events"][1]["dataHidden"], true);
+    assert_eq!(b["events"].as_array().unwrap().len(), 1);
+    assert!(b["events"][0].get("data").is_none());
+    assert_eq!(b["events"][0]["dataHidden"], true);
 
     let (_, b, _) = call(
         &app,
@@ -814,7 +896,7 @@ async fn field_rules_limit_what_kcc_sees() {
     )
     .await;
     assert_eq!(b["results"].as_array().unwrap().len(), 1);
-    assert!(b["results"][0].get("bijdragen").is_none());
+    assert!(b["results"][0].get("deelnames").is_none());
     // Filtering on a field KCC may not see is the same error as an unknown field.
     let (s, _, _) = call(
         &app,
@@ -834,7 +916,7 @@ async fn field_rules_limit_what_kcc_sees() {
         None,
     )
     .await;
-    assert_eq!(b["bijdragen"][0]["tekst"], "Geheim");
+    assert_eq!(b["deelnames"][0]["partij"], SUZANNE_ID);
 }
 
 #[tokio::test]
@@ -871,11 +953,11 @@ async fn filters_only_see_shown_fields() {
             "m1",
             "nl.vng.meldingen.melding.gedaan",
             "urn:uuid:melding-1",
-            json!({
+            json!({ "resourceData": {
                 "zaaknummer": "MOR-1", "categorie": "Afval", "omschrijving": "Volle container", "team": "afval",
                 "locatie": { "type": "Point", "coordinates": [5.12, 52.09] },
                 "melder": { "partij": SUZANNE_ID, "rol": "inwoner" }
-            }),
+            } }),
         )),
     )
     .await;
@@ -917,15 +999,15 @@ async fn batch_and_openapi() {
         json!({
             "specversion": "1.0", "id": id, "source": "https://signalen.demodam.nl",
             "type": "nl.vng.meldingen.melding.gedaan", "subject": format!("https://zaken.demodam.nl/meldingen/{nr}"),
-            "data": {
+            "data": { "resourceData": {
                 "zaaknummer": nr, "categorie": "Afval", "omschrijving": "Volle container", "team": "afval",
                 "locatie": { "type": "Point", "coordinates": [5.12, 52.09] },
                 "melder": { "partij": SUZANNE_ID, "rol": "inwoner" }
-            }
+            } }
         })
     };
     let mut kapot = melding("b3", "MOR-3");
-    kapot["data"]["locatie"] = json!("ergens");
+    kapot["data"]["resourceData"]["locatie"] = json!("ergens");
     let batch = json!([melding("b1", "MOR-1"), melding("b2", "MOR-2"), kapot]);
     let req = Request::builder()
         .method("POST")
@@ -966,7 +1048,7 @@ async fn batch_and_openapi() {
     .await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(o["openapi"], "3.1.0");
-    let ev = &o["components"]["schemas"]["Event_nl_vng_meldingen_melding_gedaan"];
+    let ev = &o["components"]["schemas"]["Action_nl_vng_meldingen_melding_gedaan"];
     assert_eq!(
         ev["allOf"][1]["properties"]["type"]["const"],
         "nl.vng.meldingen.melding.gedaan"

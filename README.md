@@ -18,7 +18,7 @@ Tijdens het fieldlab MijnGesprekken (10 november 2026) bleek er belangstelling v
 | Volgen | `GET /events` als SSE, met filter en `Last-Event-ID` als cursor |
 | Bevragen | `POST /query` (later ook de HTTP-methode `QUERY`): CQL2-filters met tijd en ruimte, paden over verwijzingen, representaties met `include`, benoemde views |
 | Live bevragen | een query geeft een snapshot plus `feedCursor`; daarna volg je dezelfde selectie via `GET /events` |
-| Profielen | eventtypes, dataschema's, projectieregels en beleid, tijdens runtime te registreren |
+| Profielen | types, handelingen en regels, tijdens runtime te registreren; elk event is een commit ([ADR-0008](docs/adr/0008-events-zijn-commits.md)) |
 | Autorisatie | een recht is een query: per type een leesregel in dezelfde filtertaal, met `actor()` uit het token en paden naar teams en deelnames; altijd met AND bij de query, vóór paginering, ook op de stroom |
 | Wissen | crypto-shredding per onderwerp, plus tombstone-events |
 | Modules | domeinlogica (bezwaar, melden openbare ruimte) als kleine open WASM-modules naast het register: commands, reacties, timers, formulieren |
@@ -28,7 +28,7 @@ Tijdens het fieldlab MijnGesprekken (10 november 2026) bleek er belangstelling v
 
 - [Aansluiten als leverancier](docs/aansluiten.md): events posten, tokens, batch, OpenAPI, of via ZGW-notificaties
 - [Eisen](docs/eisen.md): wat het moet kunnen, als eigenschappen
-- [Architectuur](docs/architectuur.md): log, projecties, indexen, API
+- [Architectuur](docs/architectuur.md): log, stand, indexen, API
 - [Query-engine](docs/query.md): taal, paden, representaties, live
 - [Autorisatie](docs/autorisatie.md): autorisatie als query, regels in het profiel, velden per rol
 - [Wissen en bewaren](docs/wissen.md): AVG, Archiefwet, crypto-shredding
@@ -94,7 +94,8 @@ T="Authorization: Bearer dev:https://id.example.nl/suzanne"
 curl -s localhost:8080/events -H "$T" -H 'content-type: application/json' -d '{
   "specversion": "1.0", "id": "e1", "source": "urn:demo", "subject": "urn:uuid:g1",
   "type": "nl.vng.gesprekken.gesprek.gestart",
-  "data": { "onderwerp": "Vraag", "initiatiefnemer": { "partij": "https://id.example.nl/suzanne", "rol": "inwoner" } } }'
+  "data": { "type": "nl.vng.gesprekken.gesprek", "resourceData": {
+    "onderwerp": "Vraag", "deelnames": [ { "partij": "https://id.example.nl/suzanne", "rol": "inwoner" } ] } } }'
 curl -N localhost:8080/events -H "$T" -H 'accept: text/event-stream' -H 'last-event-id: 0'
 curl -s localhost:8080/query -H "$T" -H 'content-type: application/json' \
   -d '{ "type": "nl.vng.gesprekken.gesprek", "filter": "status = '"'"'open'"'"'" }'
@@ -103,8 +104,8 @@ curl -s localhost:8080/query -H "$T" -H 'content-type: application/json' \
 ### Wat er in fase 1 zit
 
 - KV-trait met redb (synchroon schrijven) en een in-memory variant
-- `POST /events`: CloudEvents van profieltypes, `json.commit` en `json.commit.transaction`; alles of niets, idempotent op `source` + `id`, `previousCommit` (of de extensie `previouscommit`) met 412
-- profielen tijdens runtime (`PUT /profiles/{id}`), JSON Schema voor `data` en voor de stand, declaratieve projectie (`set`, `merge`, `append`, `remove`, `increment`, paden met `{$data.x}`)
+- `POST /events`: elk event is een commit (`resourceData`, `patch` of `deleted`) en het type benoemt de handeling uit het profiel; meerdere commits in `data.commits`, alles of niets; idempotent op `source` + `id`, `previousCommit` met 412
+- profielen tijdens runtime (`PUT /profiles/{id}`): types (JSON Schema, regels, velden per rol) en handelingen (welke commits, welke velden, wat de server zet, wie het mag); regels en filters volgen verwijzingen (`gesprek.status`)
 - lees-, maak-, schrijf- en toevoegregels in CQL2-tekst of CQL2-JSON (`=`, `<>`, `<`, `<=`, `>`, `>=`, `IN`, `IS NULL`, `AND`, `OR`, `NOT`, `actor()`, `actor('claim')`)
 - `GET /events` als SSE (`Last-Event-ID`, tickets) of JSON, `GET /subjects/{subject}`, `GET /subjects/{subject}/events`
 - veldregels (`rules.fields` met `when` en `show`): wie een subject alleen beperkt mag zien, krijgt alleen de genoemde velden en events zonder `data` (`dataHidden: true`)

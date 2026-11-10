@@ -24,7 +24,7 @@ BPMN mag blijven waar het helpt: als plaatje van het proces, of als orkestratie 
 ```
 bezwaar/
   module.yaml          # naam, versie, rechten die de module nodig heeft
-  profiel.yaml         # eventtypes, schema's, projectie, lees- en schrijfregels, views
+  profiel.yaml         # types, handelingen, lees- en schrijfregels, views
   schemas/             # JSON Schema per event en per command
   commands.wasm        # handle(command, context) -> commit | fout
   reacties.wasm        # on_event(event, context) -> commits ; on_timer(timer, context) -> commits
@@ -54,7 +54,7 @@ Wat een module van de host krijgt:
 
 | Host-functie | Wat |
 |---|---|
-| `stand(subject)` | de projectie van het onderwerp |
+| `stand(subject)` | de stand van de resource |
 | `query(filter)` | een CQL2-query, uitgevoerd met de rechten van de gebruiker, niet die van de module |
 | `nu()` | de tijd (zodat tests een vaste tijd kunnen geven) |
 | `fetch(url)` | alleen naar adressen die `module.yaml` noemt; geheimen vult de host in, de module ziet ze nooit |
@@ -115,7 +115,7 @@ Dit voorbeeld laat zien waarom de filtertaal ruimte moet kennen ([ADR-0006](adr/
 ## Delen en versies
 
 - Een module heeft een versie (semver). Het log noemt bij elk event welke module en versie het schreef (`source` plus een kenmerk `module`).
-- Een nieuwe versie die eventtypes toevoegt, is een minor-versie. Een versie die bestaande events anders projecteert, is major en vraagt een herprojectie, die het register vanuit het log kan doen.
+- Een nieuwe versie die eventtypes toevoegt, is een minor-versie. Een versie die de betekenis van een bestaande handeling verandert, is major.
 - Modules worden verspreid als ondertekend pakket (bijvoorbeeld een OCI-artefact). Een gemeente kiest welke versie ze draait.
 - Een gemeente kan een module aanpassen door een eigen versie te publiceren. Omdat de tests meekomen, ziet ze direct of haar wijziging een regel breekt.
 

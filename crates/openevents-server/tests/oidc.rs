@@ -94,11 +94,11 @@ fn melding() -> Value {
     json!({
         "specversion": "1.0", "id": "m1", "source": "https://signalen.demodam.nl",
         "type": "nl.vng.meldingen.melding.gedaan", "subject": "https://zaken.demodam.nl/meldingen/MOR-1",
-        "data": {
+        "data": { "resourceData": {
             "zaaknummer": "MOR-1", "categorie": "Afval", "omschrijving": "Volle container", "team": "afval",
             "locatie": { "type": "Point", "coordinates": [5.12, 52.09] },
             "melder": { "partij": "https://id.example.nl/priya", "rol": "inwoner" }
-        }
+        } }
     })
 }
 

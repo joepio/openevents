@@ -82,6 +82,8 @@ struct Seq {
     start: DateTime<Utc>,
     t: i64,
     steps: VecDeque<Ev>,
+    /// The deelnames per gesprek so far.
+    deelnames: Vec<(String, Vec<Value>)>,
 }
 
 impl Seq {
@@ -90,6 +92,7 @@ impl Seq {
             start,
             t: 0,
             steps: VecDeque::new(),
+            deelnames: Vec::new(),
         }
     }
     fn at(
@@ -110,6 +113,96 @@ impl Seq {
             label: label.to_string(),
             data,
         });
+    }
+    /// A new resource, created by an action with one create.
+    fn create(
+        &mut self,
+        after: i64,
+        actor: &Actor,
+        kind: &str,
+        subject: &str,
+        label: &str,
+        data: Value,
+    ) {
+        self.at(
+            after,
+            actor,
+            kind,
+            subject,
+            label,
+            json!({ "resourceData": data }),
+        );
+    }
+    /// A new resource with a fresh id (a bijdrage, aanvulling, advies); returns the id.
+    fn create_new(
+        &mut self,
+        after: i64,
+        actor: &Actor,
+        kind: &str,
+        label: &str,
+        data: Value,
+    ) -> String {
+        let id = format!("urn:uuid:{}", uuid::Uuid::now_v7());
+        self.create(after, actor, kind, &id, label, data);
+        id
+    }
+    /// What changed, as a JSON Merge Patch.
+    fn patch(
+        &mut self,
+        after: i64,
+        actor: &Actor,
+        kind: &str,
+        subject: &str,
+        label: &str,
+        data: Value,
+    ) {
+        self.at(after, actor, kind, subject, label, json!({ "patch": data }));
+    }
+    /// Start a gesprek; `initiatiefnemer` becomes the first deelname.
+    fn gesprek(&mut self, after: i64, actor: &Actor, g: &str, label: &str, mut data: Value) {
+        let first = data
+            .as_object_mut()
+            .and_then(|o| o.remove("initiatiefnemer"))
+            .unwrap_or(Value::Null);
+        self.deelnames.push((g.to_string(), vec![first.clone()]));
+        data["deelnames"] = json!([first]);
+        self.at(
+            after,
+            actor,
+            &format!("{G}.gesprek.gestart"),
+            g,
+            label,
+            json!({ "type": format!("{G}.gesprek"), "resourceData": data }),
+        );
+    }
+    /// A bijdrage is its own resource, pointing at its gesprek.
+    fn bijdrage(&mut self, after: i64, actor: &Actor, g: &str, label: &str, mut data: Value) {
+        data["gesprek"] = json!(g);
+        self.create_new(
+            after,
+            actor,
+            &format!("{G}.bijdrage.toegevoegd"),
+            label,
+            data,
+        );
+    }
+    /// Deelnames are a small list: the client sends all of it.
+    fn deelname(&mut self, after: i64, actor: &Actor, g: &str, label: &str, d: Value) {
+        let list = match self.deelnames.iter_mut().find(|(id, _)| id == g) {
+            Some((_, l)) => {
+                l.push(d);
+                l.clone()
+            }
+            None => vec![d],
+        };
+        self.patch(
+            after,
+            actor,
+            &format!("{G}.deelname.toegevoegd"),
+            g,
+            label,
+            json!({ "deelnames": list }),
+        );
     }
     /// A date `days` after a step that happens `after` minutes from now in this zaak.
     fn date(&self, after: i64, days: i64) -> String {
@@ -487,7 +580,7 @@ impl World {
         let prioriteit = self.pick(&["normaal", "normaal", "laag", "hoog"]);
         let fotos = self.pick(&[0, 1, 1, 2, 3]);
         let mut s = Seq::new(start);
-        s.at(
+        s.create(
             0,
             &indiener,
             &format!("{M}.gedaan"),
@@ -501,7 +594,7 @@ impl World {
             }),
         );
         let a = self.min(20, 900);
-        s.at(
+        s.patch(
             a,
             &mw,
             &format!("{M}.toegewezen"),
@@ -522,10 +615,9 @@ impl World {
                 "We hebben een tijdelijke afzetting geplaatst, herstel volgt deze week.",
             ]);
             let a = self.min(30, 600);
-            s.at(
+            s.gesprek(
                 a,
                 &inwoner,
-                &format!("{G}.gesprek.gestart"),
                 &g,
                 &onderwerp,
                 json!({
@@ -533,27 +625,18 @@ impl World {
                     "initiatiefnemer": { "partij": inwoner.id, "rol": "inwoner" }
                 }),
             );
-            s.at(
-                1,
-                &inwoner,
-                &format!("{G}.bijdrage.toegevoegd"),
-                &g,
-                &onderwerp,
-                json!({ "tekst": m.vraag }),
-            );
+            s.bijdrage(1, &inwoner, &g, &onderwerp, json!({ "tekst": m.vraag }));
             let a = self.min(30, 400);
-            s.at(
+            s.deelname(
                 a,
                 &mw,
-                &format!("{G}.deelname.toegevoegd"),
                 &g,
                 &onderwerp,
                 json!({ "partij": mw.id, "rol": "behandelaar" }),
             );
-            s.at(
+            s.bijdrage(
                 2,
                 &mw,
-                &format!("{G}.bijdrage.toegevoegd"),
                 &g,
                 &onderwerp,
                 json!({ "tekst": antwoord, "automatisch": false }),
@@ -576,10 +659,9 @@ impl World {
                 "Het is zelfs erger geworden sinds gisteren.",
             ]);
             let a = self.min(10, 240);
-            s.at(
+            s.gesprek(
                 a,
                 &mw,
-                &format!("{G}.gesprek.gestart"),
                 &g,
                 &onderwerp,
                 json!({
@@ -587,39 +669,23 @@ impl World {
                     "initiatiefnemer": { "partij": mw.id, "rol": "behandelaar" }
                 }),
             );
-            s.at(
+            s.deelname(
                 1,
                 &mw,
-                &format!("{G}.deelname.toegevoegd"),
                 &g,
                 &onderwerp,
                 json!({ "partij": inwoner.id, "rol": "inwoner" }),
             );
-            s.at(
+            s.bijdrage(
                 1,
                 &mw,
-                &format!("{G}.bijdrage.toegevoegd"),
                 &g,
                 &onderwerp,
                 json!({ "tekst": vraag, "automatisch": false }),
             );
             let a = self.min(20, 400);
-            s.at(
-                a,
-                &inwoner,
-                &format!("{G}.bijdrage.toegevoegd"),
-                &g,
-                &onderwerp,
-                json!({ "tekst": antwoord }),
-            );
-            s.at(
-                2,
-                &inwoner,
-                &format!("{M}.aangevuld"),
-                &zaak,
-                &nr,
-                json!({ "tekst": "Extra foto toegevoegd via het gesprek.", "fotos": 1 }),
-            );
+            s.bijdrage(a, &inwoner, &g, &onderwerp, json!({ "tekst": antwoord }));
+            s.create_new(2, &inwoner, &format!("{M}.aangevuld"), &nr, json!({ "melding": zaak, "tekst": "Extra foto toegevoegd via het gesprek.", "fotos": 1 }));
             gesprek = Some((g, onderwerp));
         } else if r < 0.75 {
             let tekst = self.pick(&[
@@ -628,27 +694,19 @@ impl World {
                 "Inmiddels hebben meer buren hier last van.",
             ]);
             let a = self.min(60, 1440);
-            s.at(
+            s.create_new(
                 a,
                 &inwoner,
                 &format!("{M}.aangevuld"),
-                &zaak,
                 &nr,
-                json!({ "tekst": tekst }),
+                json!({ "melding": zaak, "tekst": tekst }),
             );
         }
         if self.kans(0.6) {
             let a = self.min(120, 2880);
             let dagen = self.rng.gen_range(1..10);
             let datum = s.date(a, dagen);
-            s.at(
-                a,
-                &mw,
-                &format!("{M}.ingepland"),
-                &zaak,
-                &nr,
-                json!({ "datum": datum, "uitvoerder": m.uitvoerder, "toelichting": "Werkzaamheden ingepland." }),
-            );
+            s.patch(a, &mw, &format!("{M}.ingepland"), &zaak, &nr, json!({ "ingepland": json!({ "datum": datum, "uitvoerder": m.uitvoerder, "toelichting": "Werkzaamheden ingepland." }) }));
         }
         let resultaat = match self.rng.gen_range(0..11) {
             0..=7 => "opgelost",
@@ -663,7 +721,7 @@ impl World {
             _ => "Er was al een melding over deze locatie, die is inmiddels afgehandeld.".into(),
         };
         let a = self.min(240, 4320);
-        s.at(
+        s.patch(
             a,
             &mw,
             &format!("{M}.afgehandeld"),
@@ -673,45 +731,31 @@ impl World {
         );
         if let Some((g, onderwerp)) = &gesprek {
             let a = self.min(5, 120);
-            s.at(
-                a,
-                &mw,
-                &format!("{G}.bijdrage.toegevoegd"),
-                g,
-                onderwerp,
-                json!({
+            s.bijdrage(a, &mw, g, onderwerp, json!({
                     "tekst": "De melding is afgehandeld. Laat het ons weten als het probleem terugkomt.",
                     "automatisch": false
-                }),
-            );
-            s.at(
+                }));
+            s.patch(
                 1,
                 &mw,
                 &format!("{G}.gesprek.afgesloten"),
                 g,
                 onderwerp,
-                json!({ "reden": "Melding afgehandeld" }),
+                json!({ "afsluitreden": "Melding afgehandeld" }),
             );
         }
         if self.kans(0.08) {
             let a = self.min(600, 4320);
-            s.at(
+            s.patch(
                 a,
                 &inwoner,
                 &format!("{M}.heropend"),
                 &zaak,
                 &nr,
-                json!({ "reden": "Het probleem is er nog steeds." }),
+                json!({ "heropenreden": "Het probleem is er nog steeds." }),
             );
             let a = self.min(240, 2880);
-            s.at(
-                a,
-                &mw,
-                &format!("{M}.afgehandeld"),
-                &zaak,
-                &nr,
-                json!({ "resultaat": "opgelost", "toelichting": "Opnieuw bekeken en nu echt opgelost." }),
-            );
+            s.patch(a, &mw, &format!("{M}.afgehandeld"), &zaak, &nr, json!({ "resultaat": "opgelost", "toelichting": "Opnieuw bekeken en nu echt opgelost." }));
         }
         if self.kans(0.4) {
             let score = self.pick(&[5, 5, 5, 5, 5, 4, 4, 4, 4, 3, 3, 2, 1]);
@@ -723,13 +767,13 @@ impl World {
             ]);
             let a = self.min(60, 2880);
             let signalen = self.signalen.clone();
-            s.at(
+            s.patch(
                 a,
                 &signalen,
                 &format!("{M}.tevredenheid_gegeven"),
                 &zaak,
                 &nr,
-                json!({ "score": score, "opmerking": opmerking }),
+                json!({ "tevredenheid": json!({ "score": score, "opmerking": opmerking }) }),
             );
         }
         s
@@ -764,40 +808,36 @@ impl World {
         } else {
             aanvrager.clone()
         };
-        s.at(0, &olo, &format!("{V}.ingediend"), &zaak, &nr, data);
+        s.create(0, &olo, &format!("{V}.ingediend"), &zaak, &nr, data);
         let a = self.min(600, 4320);
         let beslis = s.date(a, if v.uitgebreid { 26 * 7 } else { 8 * 7 });
-        s.at(
+        s.patch(
             a,
             &mw,
             &format!("{V}.ontvankelijk_verklaard"),
             &zaak,
             &nr,
-            json!({
-                "behandelaar": mw.id, "uiterlijkeBeslisdatum": beslis,
-                "toelichting": "Aanvraag is compleet genoeg om in behandeling te nemen."
-            }),
+            json!({ "behandelaar": mw.id, "uiterlijkeBeslisdatum": beslis }),
         );
         if self.kans(0.45) {
             let a = self.min(600, 2880);
             let termijn = s.date(a, 14);
-            s.at(
+            s.patch(
                 a,
                 &mw,
                 &format!("{V}.aanvulling_gevraagd"),
                 &zaak,
                 &nr,
-                json!({
+                json!({ "aanvullingGevraagd": json!({
                     "gevraagd": v.aanvulling, "termijnTot": termijn,
                     "toelichting": "De beslistermijn is opgeschort tot de stukken binnen zijn."
-                }),
+                }) }),
             );
             let g = format!("urn:uuid:{}", uuid::Uuid::now_v7());
             let onderwerp = format!("Aanvulling nodig voor {nr}");
-            s.at(
+            s.gesprek(
                 5,
                 &mw,
-                &format!("{G}.gesprek.gestart"),
                 &g,
                 &onderwerp,
                 json!({
@@ -805,10 +845,9 @@ impl World {
                     "initiatiefnemer": { "partij": mw.id, "rol": "behandelaar" }
                 }),
             );
-            s.at(
+            s.deelname(
                 1,
                 &mw,
-                &format!("{G}.deelname.toegevoegd"),
                 &g,
                 &onderwerp,
                 json!({ "partij": aanvrager.id, "rol": "inwoner" }),
@@ -817,10 +856,9 @@ impl World {
                 "Voor uw aanvraag missen we nog: {}. U kunt dit aanleveren tot {termijn}.",
                 v.aanvulling.join(", ")
             );
-            s.at(
+            s.bijdrage(
                 1,
                 &mw,
-                &format!("{G}.bijdrage.toegevoegd"),
                 &g,
                 &onderwerp,
                 json!({ "tekst": tekst, "automatisch": false }),
@@ -831,24 +869,16 @@ impl World {
                 "Ik begrijp niet goed wat u precies nodig heeft, kunt u bellen?",
             ]);
             let a = self.min(60, 1440);
-            s.at(
-                a,
-                &aanvrager,
-                &format!("{G}.bijdrage.toegevoegd"),
-                &g,
-                &onderwerp,
-                json!({ "tekst": vraag }),
-            );
+            s.bijdrage(a, &aanvrager, &g, &onderwerp, json!({ "tekst": vraag }));
             let antwoord = self.pick(&[
                 "Ja, graag ondertekend door de constructeur.",
                 "Prima, u kunt het uploaden via het Omgevingsloket.",
                 "Ik bel u morgenochtend.",
             ]);
             let a = self.min(30, 480);
-            s.at(
+            s.bijdrage(
                 a,
                 &mw,
-                &format!("{G}.bijdrage.toegevoegd"),
                 &g,
                 &onderwerp,
                 json!({ "tekst": antwoord, "automatisch": false }),
@@ -859,45 +889,30 @@ impl World {
                 .map(|x| format!("{}.pdf", x.replace(' ', "-")))
                 .collect();
             let a = self.min(1440, 7200);
-            s.at(
-                a,
-                &indiener_aanvulling,
-                &format!("{V}.aanvulling_ontvangen"),
-                &zaak,
-                &nr,
-                json!({ "bijlagen": bijlagen, "toelichting": "Zie bijlage." }),
-            );
+            s.patch(a, &indiener_aanvulling, &format!("{V}.aanvulling_ontvangen"), &zaak, &nr, json!({ "aanvullingOntvangen": json!({ "bijlagen": bijlagen, "toelichting": "Zie bijlage." }) }));
             let a = self.min(10, 600);
-            s.at(
+            s.patch(
                 a,
                 &mw,
                 &format!("{G}.gesprek.afgesloten"),
                 &g,
                 &onderwerp,
-                json!({ "reden": "Aanvulling ontvangen" }),
+                json!({ "afsluitreden": "Aanvulling ontvangen" }),
             );
         }
         if self.kans(0.08) {
             let a = self.min(1440, 10080);
-            s.at(
-                a,
-                &olo,
-                &format!("{V}.ingetrokken"),
-                &zaak,
-                &nr,
-                json!({ "reden": "Aanvrager heeft de aanvraag ingetrokken via het Omgevingsloket." }),
-            );
+            s.patch(a, &olo, &format!("{V}.ingetrokken"), &zaak, &nr, json!({ "intrekkingsreden": "Aanvrager heeft de aanvraag ingetrokken via het Omgevingsloket." }));
             return s;
         }
         if v.uitgebreid || self.kans(0.6) {
             let a = self.min(600, 2880);
-            s.at(
+            let advies = s.create_new(
                 a,
                 &mw,
                 &format!("{V}.advies_gevraagd"),
-                &zaak,
                 &nr,
-                json!({ "adviseur": v.adviseur, "vraag": v.vraag }),
+                json!({ "aanvraag": zaak, "adviseur": v.adviseur, "vraag": v.vraag }),
             );
             let uitkomst = self.pick(&[
                 "positief",
@@ -913,26 +928,19 @@ impl World {
                 _ => "Akkoord, mits de kleur wordt aangepast.",
             };
             let a = self.min(4320, 20160);
-            s.at(
+            s.patch(
                 a,
                 &mw,
                 &format!("{V}.advies_ontvangen"),
-                &zaak,
+                &advies,
                 &nr,
-                json!({ "adviseur": v.adviseur, "uitkomst": uitkomst, "toelichting": toelichting }),
+                json!({ "uitkomst": uitkomst, "toelichting": toelichting }),
             );
         }
         if self.kans(0.15) {
             let a = self.min(600, 2880);
             let nieuw = s.date(a, 14 * 7);
-            s.at(
-                a,
-                &mw,
-                &format!("{V}.termijn_verlengd"),
-                &zaak,
-                &nr,
-                json!({ "uiterlijkeBeslisdatum": nieuw, "reden": "Advies van een externe partij duurt langer." }),
-            );
+            s.patch(a, &mw, &format!("{V}.termijn_verlengd"), &zaak, &nr, json!({ "uiterlijkeBeslisdatum": nieuw, "verlengingsreden": "Advies van een externe partij duurt langer." }));
         }
         let uitkomst = match self.rng.gen_range(0..100) {
             0..=54 => "verleend",
@@ -952,7 +960,14 @@ impl World {
             let gekozen: Vec<&str> = all.choose_multiple(&mut self.rng, 2).copied().collect();
             besluit["voorschriften"] = json!(gekozen);
         }
-        s.at(a, &mw, &format!("{V}.besloten"), &zaak, &nr, besluit);
+        s.patch(
+            a,
+            &mw,
+            &format!("{V}.besloten"),
+            &zaak,
+            &nr,
+            json!({ "besluit": besluit }),
+        );
         if uitkomst.starts_with("verleend") {
             let publicatie = format!(
                 "https://zoek.officielebekendmakingen.nl/gmb-{}-{}",
@@ -960,13 +975,13 @@ impl World {
                 self.rng.gen_range(100_000..999_999)
             );
             let a = self.min(60, 2880);
-            s.at(
+            s.patch(
                 a,
                 &mw,
                 &format!("{V}.bekendgemaakt"),
                 &zaak,
                 &nr,
-                json!({ "publicatie": publicatie }),
+                json!({ "bekendmaking": json!({ "publicatie": publicatie }) }),
             );
         }
         s
@@ -978,10 +993,9 @@ impl World {
         let (onderwerp, vraag, antwoord) = self.pick(WMO);
         let g = format!("urn:uuid:{}", uuid::Uuid::now_v7());
         let mut s = Seq::new(start);
-        s.at(
+        s.gesprek(
             0,
             &inwoner,
-            &format!("{G}.gesprek.gestart"),
             &g,
             onderwerp,
             json!({
@@ -989,48 +1003,38 @@ impl World {
                 "initiatiefnemer": { "partij": inwoner.id, "rol": "inwoner" }
             }),
         );
-        s.at(
-            1,
-            &inwoner,
-            &format!("{G}.bijdrage.toegevoegd"),
-            &g,
-            onderwerp,
-            json!({ "tekst": vraag }),
-        );
+        s.bijdrage(1, &inwoner, &g, onderwerp, json!({ "tekst": vraag }));
         let a = self.min(30, 600);
-        s.at(
+        s.deelname(
             a,
             &mw,
-            &format!("{G}.deelname.toegevoegd"),
             &g,
             onderwerp,
             json!({ "partij": mw.id, "rol": "behandelaar" }),
         );
-        s.at(
+        s.bijdrage(
             2,
             &mw,
-            &format!("{G}.bijdrage.toegevoegd"),
             &g,
             onderwerp,
             json!({ "tekst": antwoord, "automatisch": false }),
         );
         let a = self.min(10, 600);
-        s.at(
+        s.bijdrage(
             a,
             &inwoner,
-            &format!("{G}.bijdrage.toegevoegd"),
             &g,
             onderwerp,
             json!({ "tekst": "Dank u wel." }),
         );
         let a = self.min(10, 1440);
-        s.at(
+        s.patch(
             a,
             &mw,
             &format!("{G}.gesprek.afgesloten"),
             &g,
             onderwerp,
-            json!({ "reden": "Vraag beantwoord" }),
+            json!({ "afsluitreden": "Vraag beantwoord" }),
         );
         s
     }

@@ -1,8 +1,8 @@
 //! Profiles: a domain on the register, as data (docs/profielen.md).
 //!
-//! A profile declares subject types (state schema, queryable fields, read and write
-//! rules in CQL2) and event types (data schema, which right they need, and a purely
-//! declarative projection onto the subject's state).
+//! A profile declares types (state schema, queryable fields, read and write rules in
+//! CQL2) and actions: named handelingen that say which commits a client may send
+//! (ADR-0008). Every event is a commit; its CloudEvent type names the action.
 
 use std::collections::HashMap;
 
@@ -18,18 +18,11 @@ fn perr<T>(msg: impl Into<String>) -> Result<T, ProfileError> {
     Err(ProfileError(msg.into()))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Right {
-    Append,
-    Write,
-}
-
 #[derive(Default)]
 pub struct Rules {
     pub read: Option<Expr>,
     pub create: Option<Expr>,
     pub write: Option<Expr>,
-    pub append: Option<Expr>,
 }
 
 /// Which fields an actor sees: the first rule whose `when` holds applies.
@@ -47,22 +40,40 @@ pub struct SubjectType {
     pub rules: Rules,
 }
 
-#[derive(Debug, Clone)]
-pub enum ProjOp {
-    Merge { path: String, value: Value },
-    Set { path: String, value: Value },
-    Append { path: String, value: Value },
-    Remove { path: String },
-    Increment { path: String, by: f64 },
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommitOp {
+    Create,
+    Update,
+    Delete,
 }
 
-pub struct EventType {
+impl CommitOp {
+    pub fn name(self) -> &'static str {
+        match self {
+            CommitOp::Create => "create",
+            CommitOp::Update => "update",
+            CommitOp::Delete => "delete",
+        }
+    }
+}
+
+/// One kind of commit an action allows.
+pub struct CommitSpec {
+    pub type_name: String,
+    pub op: CommitOp,
+    /// Top-level fields the client may set; `None` is any field.
+    pub fields: Option<Vec<String>>,
+    /// Fields the server sets: constants, `$actor` and `$time`.
+    pub set: Map<String, Value>,
+    /// Who may do this. Without one, the type's create / write rule applies.
+    pub rule: Option<Expr>,
+}
+
+/// A handeling: a named, authorised set of commits.
+pub struct Action {
     pub name: String,
-    pub subject_type: String,
-    pub creates: bool,
-    pub right: Right,
-    pub dataschema: Option<jsonschema::Validator>,
-    pub projection: Vec<ProjOp>,
+    pub title: Option<String>,
+    pub commits: Vec<CommitSpec>,
 }
 
 pub struct Profile {
@@ -70,7 +81,7 @@ pub struct Profile {
     pub version: String,
     pub raw: Value,
     pub types: HashMap<String, SubjectType>,
-    pub events: HashMap<String, EventType>,
+    pub actions: HashMap<String, Action>,
 }
 
 fn compile_schema(v: &Value, at: &str) -> Result<jsonschema::Validator, ProfileError> {
@@ -89,25 +100,6 @@ fn rule(obj: &Map<String, Value>, name: &str, at: &str) -> Result<Option<Expr>, 
 
 fn str_field<'a>(obj: &'a Map<String, Value>, name: &str) -> Option<&'a str> {
     obj.get(name).and_then(|v| v.as_str())
-}
-
-fn parse_op(v: &Value, at: &str) -> Result<ProjOp, ProfileError> {
-    let obj = v
-        .as_object()
-        .ok_or_else(|| ProfileError(format!("{at}: projection step must be an object")))?;
-    let path = str_field(obj, "path").unwrap_or("").to_string();
-    let value = obj.get("value").cloned().unwrap_or(Value::Null);
-    match str_field(obj, "op") {
-        Some("merge") => Ok(ProjOp::Merge { path, value }),
-        Some("set") => Ok(ProjOp::Set { path, value }),
-        Some("append") => Ok(ProjOp::Append { path, value }),
-        Some("remove") => Ok(ProjOp::Remove { path }),
-        Some("increment") => Ok(ProjOp::Increment {
-            path,
-            by: obj.get("by").and_then(|b| b.as_f64()).unwrap_or(1.0),
-        }),
-        other => perr(format!("{at}: unknown projection op {other:?}")),
-    }
 }
 
 impl Profile {
@@ -140,7 +132,6 @@ impl Profile {
                             read: rule(r, "read", &at)?,
                             create: rule(r, "create", &at)?,
                             write: rule(r, "write", &at)?,
-                            append: rule(r, "append", &at)?,
                         }
                     }
                 };
@@ -187,66 +178,101 @@ impl Profile {
                         allow_commits: def
                             .get("allowCommits")
                             .and_then(|b| b.as_bool())
-                            .unwrap_or(true),
+                            .unwrap_or(false),
                         rules,
                     },
                 );
             }
         }
 
-        let mut events = HashMap::new();
+        let mut actions = HashMap::new();
         if let Some(e) = obj.get("events") {
+            if e.as_object().is_some_and(|m| !m.is_empty()) {
+                return perr("events with projections are gone (ADR-0008); declare actions");
+            }
+        }
+        if let Some(e) = obj.get("actions") {
             let e = e
                 .as_object()
-                .ok_or_else(|| ProfileError("events must be an object".into()))?;
+                .ok_or_else(|| ProfileError("actions must be an object".into()))?;
             for (name, def) in e {
-                let at = format!("events.{name}");
+                let at = format!("actions.{name}");
                 if name.starts_with("json.commit") || name.starts_with("nl.vng.openevents.") {
                     return perr(format!("{at}: this event type is reserved"));
                 }
                 let def = def
                     .as_object()
                     .ok_or_else(|| ProfileError(format!("{at} must be an object")))?;
-                let subject_type = str_field(def, "subjectType")
-                    .ok_or_else(|| ProfileError(format!("{at}: missing subjectType")))?
-                    .to_string();
-                if !types.contains_key(&subject_type) {
-                    return perr(format!(
-                        "{at}: subjectType {subject_type} is not a type of this profile"
-                    ));
-                }
-                let right = match str_field(def, "right").unwrap_or("write") {
-                    "append" => Right::Append,
-                    "write" => Right::Write,
-                    other => {
-                        return perr(format!("{at}: right must be append or write, not {other}"))
+                let list = def
+                    .get("commits")
+                    .and_then(|c| c.as_array())
+                    .filter(|c| !c.is_empty())
+                    .ok_or_else(|| {
+                        ProfileError(format!("{at}: commits must be a non-empty list"))
+                    })?;
+                let mut commits = Vec::new();
+                for (i, c) in list.iter().enumerate() {
+                    let cat = format!("{at}.commits[{i}]");
+                    let c = c
+                        .as_object()
+                        .ok_or_else(|| ProfileError(format!("{cat} must be an object")))?;
+                    let type_name = str_field(c, "type")
+                        .ok_or_else(|| ProfileError(format!("{cat}: missing type")))?
+                        .to_string();
+                    if !types.contains_key(&type_name) {
+                        return perr(format!("{cat}: {type_name} is not a type of this profile"));
                     }
-                };
-                let projection = match def.get("projection") {
-                    None => vec![],
-                    Some(p) => p
-                        .as_array()
-                        .ok_or_else(|| ProfileError(format!("{at}.projection must be a list")))?
-                        .iter()
-                        .enumerate()
-                        .map(|(i, step)| parse_op(step, &format!("{at}.projection[{i}]")))
-                        .collect::<Result<_, _>>()?,
-                };
-                events.insert(
+                    let op = match str_field(c, "op") {
+                        Some("create") => CommitOp::Create,
+                        Some("update") => CommitOp::Update,
+                        Some("delete") => CommitOp::Delete,
+                        other => {
+                            return perr(format!(
+                                "{cat}: op must be create, update or delete, not {other:?}"
+                            ))
+                        }
+                    };
+                    let fields = match c.get("fields") {
+                        None => None,
+                        Some(f) => Some(
+                            f.as_array()
+                                .ok_or_else(|| {
+                                    ProfileError(format!("{cat}.fields must be a list"))
+                                })?
+                                .iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect(),
+                        ),
+                    };
+                    let set = match c.get("set") {
+                        None => Map::new(),
+                        Some(Value::Object(m)) => {
+                            check_set(&Value::Object(m.clone()), &format!("{cat}.set"))?;
+                            m.clone()
+                        }
+                        Some(_) => return perr(format!("{cat}.set must be an object")),
+                    };
+                    let rule = match c.get("rule") {
+                        None => None,
+                        Some(v) => Some(
+                            cql2::parse_any(v)
+                                .map_err(|e| ProfileError(format!("{cat}.rule: {e}")))?,
+                        ),
+                    };
+                    commits.push(CommitSpec {
+                        type_name,
+                        op,
+                        fields,
+                        set,
+                        rule,
+                    });
+                }
+                actions.insert(
                     name.clone(),
-                    EventType {
+                    Action {
                         name: name.clone(),
-                        subject_type,
-                        creates: def
-                            .get("creates")
-                            .and_then(|b| b.as_bool())
-                            .unwrap_or(false),
-                        right,
-                        dataschema: def
-                            .get("dataschema")
-                            .map(|s| compile_schema(s, &at))
-                            .transpose()?,
-                        projection,
+                        title: str_field(def, "title").map(String::from),
+                        commits,
                     },
                 );
             }
@@ -257,7 +283,7 @@ impl Profile {
             version,
             raw,
             types,
-            events,
+            actions,
         })
     }
 }
@@ -270,65 +296,36 @@ pub fn schema_errors(v: &jsonschema::Validator, instance: &Value) -> Vec<(String
         .collect()
 }
 
-// ---------- projection ----------
-
-/// Values available to templates in a projection step.
-pub struct TemplateContext<'a> {
-    pub data: &'a Value,
-    pub time: &'a str,
-    pub actor: &'a str,
-    pub id: &'a str,
-    pub subject: &'a str,
-    pub event_type: &'a str,
+/// `set` holds constants and the placeholders `$actor` and `$time`, nothing else:
+/// no expressions, so a profile stays data.
+fn check_set(v: &Value, at: &str) -> Result<(), ProfileError> {
+    match v {
+        Value::String(s) if s.starts_with('$') && s != "$actor" && s != "$time" => perr(format!(
+            "{at}: {s} is not allowed; set takes constants, $actor and $time"
+        )),
+        Value::Object(m) => m
+            .iter()
+            .try_for_each(|(k, v)| check_set(v, &format!("{at}.{k}"))),
+        Value::Array(items) => items.iter().try_for_each(|v| check_set(v, at)),
+        _ => Ok(()),
+    }
 }
 
-fn render(v: &Value, ctx: &TemplateContext) -> Value {
+/// Fill in `$actor` and `$time` in a `set` value.
+pub fn render_set(v: &Value, actor: &str, time: &str) -> Value {
     match v {
-        Value::String(s) if s.starts_with('$') => match s.as_str() {
-            "$data" => ctx.data.clone(),
-            "$time" => Value::String(ctx.time.into()),
-            "$actor" => Value::String(ctx.actor.into()),
-            "$id" => Value::String(ctx.id.into()),
-            "$subject" => Value::String(ctx.subject.into()),
-            "$type" => Value::String(ctx.event_type.into()),
-            other => match other.strip_prefix("$data.") {
-                // An exact path: a list value stays a list (unlike query lookups,
-                // which flatten lists to match any element).
-                Some(path) => path
-                    .split('.')
-                    .try_fold(ctx.data, |v, part| v.get(part))
-                    .cloned()
-                    .unwrap_or(Value::Null),
-                None => v.clone(),
-            },
-        },
-        Value::Object(map) => Value::Object(
-            map.iter()
-                .map(|(k, v)| (k.clone(), render(v, ctx)))
+        Value::String(s) if s == "$actor" => Value::String(actor.into()),
+        Value::String(s) if s == "$time" => Value::String(time.into()),
+        Value::Object(m) => Value::Object(
+            m.iter()
+                .map(|(k, v)| (k.clone(), render_set(v, actor, time)))
                 .collect(),
         ),
-        Value::Array(items) => Value::Array(items.iter().map(|v| render(v, ctx)).collect()),
+        Value::Array(items) => {
+            Value::Array(items.iter().map(|v| render_set(v, actor, time)).collect())
+        }
         other => other.clone(),
     }
-}
-
-/// The value at a dotted path, created as empty objects along the way.
-fn slot<'a>(doc: &'a mut Value, path: &str) -> &'a mut Value {
-    if path.is_empty() {
-        return doc;
-    }
-    let mut cur = doc;
-    for part in path.split('.') {
-        if !cur.is_object() {
-            *cur = Value::Object(Map::new());
-        }
-        cur = cur
-            .as_object_mut()
-            .unwrap()
-            .entry(part.to_string())
-            .or_insert(Value::Null);
-    }
-    cur
 }
 
 /// RFC 7396 JSON Merge Patch.
@@ -351,181 +348,44 @@ pub fn merge_patch(target: &mut Value, patch: &Value) {
     }
 }
 
-/// A path may contain `{$data.x}` parts, filled in from the event (dots in the value
-/// become `_`, so the value stays one path segment).
-fn render_path(path: &str, ctx: &TemplateContext) -> String {
-    let mut out = String::new();
-    let mut rest = path;
-    while let Some(start) = rest.find('{') {
-        out.push_str(&rest[..start]);
-        let Some(end) = rest[start..].find('}') else {
-            out.push_str(&rest[start..]);
-            return out;
-        };
-        let expr = rest[start + 1..start + end].trim();
-        let v = render(&Value::String(expr.to_string()), ctx);
-        let text = match v {
-            Value::String(s) => s,
-            Value::Null => "_".to_string(),
-            other => other.to_string(),
-        };
-        out.push_str(&text.replace('.', "_"));
-        rest = &rest[start + end + 1..];
-    }
-    out.push_str(rest);
-    out
-}
-
-fn remove_path(state: &mut Value, path: &str) {
-    if let Some((parent, last)) = path.rsplit_once('.') {
-        if let Some(obj) = slot(state, parent).as_object_mut() {
-            obj.remove(last);
-        }
-    } else if let Some(obj) = state.as_object_mut() {
-        obj.remove(path);
-    }
-}
-
-pub fn apply_projection(state: &mut Value, ops: &[ProjOp], ctx: &TemplateContext) {
-    if !state.is_object() {
-        *state = Value::Object(Map::new());
-    }
-    for op in ops {
-        let op = match op {
-            ProjOp::Merge { path, value } => ProjOp::Merge {
-                path: render_path(path, ctx),
-                value: value.clone(),
-            },
-            ProjOp::Set { path, value } => ProjOp::Set {
-                path: render_path(path, ctx),
-                value: value.clone(),
-            },
-            ProjOp::Append { path, value } => ProjOp::Append {
-                path: render_path(path, ctx),
-                value: value.clone(),
-            },
-            ProjOp::Remove { path } => ProjOp::Remove {
-                path: render_path(path, ctx),
-            },
-            ProjOp::Increment { path, by } => ProjOp::Increment {
-                path: render_path(path, ctx),
-                by: *by,
-            },
-        };
-        match &op {
-            ProjOp::Merge { path, value } => merge_patch(slot(state, path), &render(value, ctx)),
-            ProjOp::Set { path, value } => {
-                // Setting null removes the field, as in a merge patch.
-                let v = render(value, ctx);
-                if v.is_null() {
-                    remove_path(state, path);
-                } else {
-                    *slot(state, path) = v;
-                }
-            }
-            ProjOp::Append { path, value } => {
-                let v = render(value, ctx);
-                if v.is_null() {
-                    continue;
-                }
-                let s = slot(state, path);
-                if !s.is_array() {
-                    *s = Value::Array(vec![]);
-                }
-                s.as_array_mut().unwrap().push(v);
-            }
-            ProjOp::Remove { path } => remove_path(state, path),
-            ProjOp::Increment { path, by } => {
-                let s = slot(state, path);
-                let n = s.as_f64().unwrap_or(0.0) + *by;
-                *s = if n.fract() == 0.0 {
-                    Value::from(n as i64)
-                } else {
-                    Value::from(n)
-                };
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
 
     #[test]
-    fn projection_steps() {
-        let data = json!({ "tekst": "hallo", "door": "x" });
-        let ctx = TemplateContext {
-            data: &data,
-            time: "t1",
-            actor: "a",
-            id: "e1",
-            subject: "s",
-            event_type: "x.y",
-        };
-        let mut state = json!({ "status": "open" });
-        apply_projection(
-            &mut state,
-            &[
-                ProjOp::Append {
-                    path: "bijdragen".into(),
-                    value: json!({ "tekst": "$data.tekst", "op": "$time" }),
-                },
-                ProjOp::Set {
-                    path: "laatsteBijdrage.door".into(),
-                    value: json!("$actor"),
-                },
-                ProjOp::Increment {
-                    path: "aantal".into(),
-                    by: 1.0,
-                },
-                ProjOp::Merge {
-                    path: "".into(),
-                    value: json!({ "status": null, "x": 1 }),
-                },
-                ProjOp::Append {
-                    path: "rollen.{$data.door}".into(),
-                    value: json!("$actor"),
-                },
-            ],
-            &ctx,
-        );
-        assert_eq!(
-            state,
-            json!({ "bijdragen": [ { "tekst": "hallo", "op": "t1" } ], "laatsteBijdrage": { "door": "a" }, "aantal": 1, "x": 1, "rollen": { "x": ["a"] } })
-        );
+    fn merge_patch_rfc7396() {
+        let mut doc = json!({ "a": 1, "b": { "c": 2, "d": 3 }, "l": [1, 2] });
+        merge_patch(&mut doc, &json!({ "a": null, "b": { "c": 9 }, "l": [3] }));
+        assert_eq!(doc, json!({ "b": { "c": 9, "d": 3 }, "l": [3] }));
     }
 
     #[test]
-    fn data_lists_stay_lists() {
-        let data = json!({ "activiteiten": ["bouwen", "kappen"], "a": { "b": [1] } });
-        let ctx = TemplateContext {
-            data: &data,
-            time: "t1",
-            actor: "a",
-            id: "e1",
-            subject: "s",
-            event_type: "x.y",
-        };
-        let mut state = json!({});
-        apply_projection(
-            &mut state,
-            &[
-                ProjOp::Set {
-                    path: "activiteiten".into(),
-                    value: json!("$data.activiteiten"),
-                },
-                ProjOp::Set {
-                    path: "b".into(),
-                    value: json!("$data.a.b"),
-                },
-            ],
-            &ctx,
+    fn set_placeholders() {
+        let v = render_set(
+            &json!({ "door": "$actor", "x": { "t": "$time" }, "s": "open" }),
+            "a",
+            "t1",
         );
-        assert_eq!(
-            state,
-            json!({ "activiteiten": ["bouwen", "kappen"], "b": [1] })
-        );
+        assert_eq!(v, json!({ "door": "a", "x": { "t": "t1" }, "s": "open" }));
+        assert!(check_set(&json!({ "x": "$data.y" }), "set").is_err());
+    }
+
+    #[test]
+    fn actions_compile() {
+        let p = Profile::compile(json!({
+            "id": "t", "types": { "x.gesprek": {}, "x.bijdrage": {} },
+            "actions": { "x.bijdrage.toegevoegd": { "commits": [
+                { "type": "x.bijdrage", "op": "create", "fields": ["tekst"], "set": { "door": "$actor" },
+                  "rule": "gesprek.status = 'open'" } ] } }
+        }))
+        .unwrap();
+        let a = &p.actions["x.bijdrage.toegevoegd"];
+        assert_eq!(a.commits[0].op, CommitOp::Create);
+        assert!(Profile::compile(
+            json!({ "id": "t", "types": {}, "actions": { "json.commit": { "commits": [] } } })
+        )
+        .is_err());
+        assert!(Profile::compile(json!({ "id": "t", "types": { "a": {} }, "actions": { "a.b": { "commits": [ { "type": "b", "op": "create" } ] } } })).is_err());
     }
 }

@@ -58,7 +58,7 @@ Deze lijst is het werkpakket voor het lab. Elke regel wordt een commit in een la
 
 ### Profielen als lab-onderwerp
 
-Een profiel (eventtypes, dataschema's, projectieregels, beleid) is zelf ook een contract. Voorstel: `profiles/gesprekken/next.yaml` in het lab, naast `apis/rest/gesprekken`, zodat de vergelijking "API of profiel" in het lab zichtbaar is.
+Een profiel (types, handelingen, regels) is zelf ook een contract. Voorstel: `profiles/gesprekken/next.yaml` in het lab, naast `apis/rest/gesprekken`, zodat de vergelijking "API of profiel" in het lab zichtbaar is.
 
 ## Volgorde
 

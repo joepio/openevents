@@ -132,7 +132,7 @@ h2 { font-size: 14px; margin: 0 0 8px; }
         <input id="w-subject" class="grow mono" placeholder="onderwerp">
         <button class="secondary" id="w-new">Nieuw</button>
       </div>
-      <div class="row"><input id="w-prev" class="grow mono" placeholder="previouscommit (optioneel)"></div>
+      <div class="row"><input id="w-prev" class="grow mono" placeholder="previousCommit (optioneel)"></div>
       <textarea id="w-data"></textarea>
       <div class="row" style="margin-top:8px"><button class="primary" id="w-send">Verstuur als <span id="w-as"></span></button></div>
     </div>
@@ -378,8 +378,18 @@ function fillWrite() {
     $("w-data").value = JSON.stringify({ resourceId: $("w-subject").value || "urn:uuid:...", type, resourceData: {} }, null, 2);
     return;
   }
+  // An action: a commit template from its first allowed commit (fields only; the
+  // register fills in what the action sets).
   const def = state.eventTypes.find(e => e.name === v);
-  $("w-data").value = JSON.stringify(def ? exampleFor(def.def.dataschema, "") || {} : {}, null, 2);
+  const spec = def && def.def.commits && def.def.commits[0];
+  if (!spec) { $("w-data").value = "{}"; return; }
+  const t = state.types.find(x => x.name === spec.type);
+  const props = (t && t.def.schema && t.def.schema.properties) || {};
+  const body = {};
+  for (const f of spec.fields || Object.keys(props)) body[f] = exampleFor(props[f] || {}, f);
+  if (spec.op === "create") { newSubject(); $("w-data").value = JSON.stringify({ type: spec.type, resourceData: body }, null, 2); }
+  else if (spec.op === "update") $("w-data").value = JSON.stringify({ patch: body }, null, 2);
+  else $("w-data").value = JSON.stringify({ deleted: true }, null, 2);
 }
 $("w-type").addEventListener("change", fillWrite);
 $("w-new").addEventListener("click", () => { newSubject(); if ($("w-type").value === "json.commit") fillWrite(); });
@@ -387,9 +397,9 @@ $("w-send").addEventListener("click", async () => {
   let data;
   try { data = JSON.parse($("w-data").value); } catch (e) { renderJson($("w-result"), { fout: "data is geen geldige JSON" }); return; }
   const type = $("w-type").value;
-  const subject = type === "json.commit" ? (data.resourceId || $("w-subject").value) : $("w-subject").value;
+  const subject = data.resourceId || $("w-subject").value;
   const ev = { specversion: "1.0", id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()), source: "urn:openevents:ui", type, subject, time: new Date().toISOString(), data };
-  if ($("w-prev").value.trim()) { if (type === "json.commit") data.previousCommit = $("w-prev").value.trim(); else ev.previouscommit = $("w-prev").value.trim(); }
+  if ($("w-prev").value.trim() && !data.commits) data.previousCommit = $("w-prev").value.trim();
   const r = await api("POST", "/events", ev);
   renderJson($("w-sent"), ev);
   renderJson($("w-result"), { status: r.status, body: r.data });
@@ -405,7 +415,7 @@ async function loadProfiles() {
     const full = await api("GET", "/profiles/" + encodeURIComponent(p.id));
     state.profiles.push(full.data);
     for (const [name, def] of Object.entries(full.data.types || {})) state.types.push({ name, def, profile: p.id });
-    for (const [name, def] of Object.entries(full.data.events || {})) state.eventTypes.push({ name, def, profile: p.id });
+    for (const [name, def] of Object.entries(full.data.actions || {})) state.eventTypes.push({ name, def, profile: p.id });
   }
   // Profiles with personas (the richer examples) first.
   const rank = (name) => { const t = state.types.find(x => x.name === name); const p = state.profiles.find(x => x.id === t.profile); return p && p.personas ? 0 : 1; };

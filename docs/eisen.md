@@ -11,12 +11,12 @@ Eisen staan hier als eigenschappen, niet als techniek. Een techniek wordt pas ge
 | F3 | Gelijktijdig schrijven gaat niet stilletjes mis | Een transactie met `previousCommit` die niet meer klopt, krijgt 412 |
 | F4 | Clients kunnen live volgen | `GET /events` als SSE levert nieuwe events binnen een seconde na opslag |
 | F5 | Volgen hervat na een onderbreking | Met `Last-Event-ID` komen precies de gemiste events, zonder gat en zonder dubbele |
-| F6 | De actuele stand is op te vragen | Per onderwerp is er een projectie die gelijk loopt met het log |
+| F6 | De actuele stand is op te vragen | Per resource is er een stand die gelijk loopt met het log |
 | F7 | Krachtig bevragen | Filters op velden, paden over verwijzingen (ten minste 2 stappen), sorteren, cursor-paginering, velden kiezen en gerelateerde resources meenemen |
 | F8 | Benoemde representaties | Een beheerder kan een view registreren (query-template met parameters) die clients bij naam aanroepen |
 | F9 | Snapshot en stroom sluiten op elkaar aan | Een query geeft een `feedCursor`; volgen vanaf die cursor mist niets dat na de snapshot gebeurde |
-| F10 | Domeinen zonder nieuwe build | Een profiel (eventtypes, dataschema's, projectieregels, beleid) is tijdens runtime te registreren |
-| F11 | Strenge validatie | Elk event wordt bij binnenkomst gevalideerd tegen het dataschema van zijn type; ongeldige events worden geweigerd |
+| F10 | Domeinen zonder nieuwe build | Een profiel (types, handelingen, regels) is tijdens runtime te registreren |
+| F11 | Strenge validatie | Elk event wordt bij binnenkomst gecontroleerd tegen zijn handeling en het schema van de resource; ongeldige events worden geweigerd |
 | F12 | Geschiedenis per onderwerp | Alle events van één onderwerp zijn op volgorde op te halen (tijdlijn) |
 | F13 | Bijlagen | Grote inhoud gaat via verwijzingen (`dataref`, file-upload-pattern), niet inline |
 
