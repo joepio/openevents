@@ -115,3 +115,28 @@ Alles wat een beslissing of neveneffect is (een automatisch antwoord, automatisc
 | `involved`-autorisatie, herkenning van issues aan velden | vervangen door lees- en schrijfregels in het profiel |
 | Rust-types als schema's | vervangen door profielen tijdens runtime |
 | e-mail, push, frontend | worden aparte consumers; ZaakChat wordt de eerste app op OpenEvents |
+
+## Een zaaksysteem op OpenEvents
+
+Wie een echt zaaksysteem wil maken, krijgt deze rolverdeling:
+
+| Onderdeel | Waar het zit |
+|---|---|
+| Zaaktype-logica: statusovergangen, verplichte gegevens, besluiten, termijnen | **modules** in de modulehost (command), zie [modules](modules.md) |
+| Wie welke handeling mag doen | de module, voor commands; OpenEvents controleert alleen de schrijfregel |
+| Opslag, geschiedenis, audittrail | **OpenEvents** (log) |
+| Actuele stand van een zaak | OpenEvents (projectie, profiel `zaken`) |
+| Werkvoorraad, "mijn zaken", zoeken, kaart, tijdlijn | OpenEvents (`/query`, views, SSE) |
+| Wie wat mag lezen | OpenEvents (leesregels) |
+| Brieven, klantcontact, archief, notificaties | consumers |
+| Zaaktypen en catalogus | definities als data; een kandidaat is Atomic Data, dat sterk is in gedeelde schema's |
+| ZGW-API's voor bestaande afnemers | een façade: writes worden commands, reads worden `/query` |
+
+Een handeling: een behandelaar kiest "zet status op Besluit genomen". De module leest de zaak, toetst de regels en schrijft één JSON Commit met `previousCommit`, bijvoorbeeld `status.gezet`, `besluit.genomen` en `resultaat.bepaald`, atomair. Dat zijn de "handelingen" waar VNG Platform Dienstverlening om vraagt, zonder een nieuwe API per handeling.
+
+Als OpenEvents de bron wordt (system of record), worden deze eisen verplicht in plaats van later:
+
+- duurzaam schrijven, online backup, herstel naar een tijdstip, failover (K1 tot K3) en schaal tot miljoenen zaken (K4);
+- invarianten over onderwerpen heen, zoals een unieke zaakidentificatie: een uniekheidsindex of een teller in de transactie, want `previousCommit` geldt per onderwerp;
+- documenten via `dataref` naar opslag met dezelfde leesregels;
+- Archiefwet: overbrengen naar een e-depot en vernietigen, met een bewijs als event.

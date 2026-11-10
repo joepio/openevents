@@ -10,22 +10,22 @@ Per type staan in het profiel een leesregel, een schrijfregel en eventueel velde
 
 ```yaml
 gesprek:
-  read:
-    any:
-      - { deelnames.partij: $actor }                       # ik doe mee
-      - { aanleiding.zaak.zaaktype.team.leden: $actor }    # mijn team behandelt dit zaaktype
-  write:
-    any:
-      - { deelnames: { all: [ { partij: $actor }, { rol: { in: [curator, bewindvoerder, behandelaar] } } ] } }
-      - { aanleiding.zaak.zaaktype.team.leden: $actor }
-  append:
-    { deelnames.partij: $actor }
+  read: >
+    deelnames.partij = actor()
+    OR aanleiding.zaak.zaaktype.team.leden = actor()
+  append: >
+    deelnames.partij = actor()
+  write: >
+    (deelnames.partij = actor() AND deelnames.rol IN ('curator', 'bewindvoerder', 'behandelaar'))
+    OR aanleiding.zaak.zaaktype.team.leden = actor()
   fields:
-    default: all
-    "$actor.rol = kcc": [onderwerp, status, laatsteBijdrage.tijd]
+    - when: "actor('rol') = 'kcc'"
+      show: [onderwerp, status, laatsteBijdrage.tijd]
 ```
 
-- `$actor` is de identiteit uit het token (een URI van een persoon, medewerker of systeem). `$actor.<claim>` is een claim uit het token, zoals `rol`.
+De regels zijn [CQL2](query.md#filtertaal)-tekst, dezelfde taal als een query. Ze worden bij het registreren van het profiel geparst tot CQL2-JSON.
+
+- `actor()` is de identiteit uit het token (een URI van een persoon, medewerker of systeem). `actor('rol')` is een claim uit het token.
 - `read` bepaalt welke onderwerpen je ziet: in query's, in views, op de stroom en in de tijdlijn.
 - `append` bepaalt of je events mag toevoegen van types die het profiel als "toevoegen" markeert (zoals `bijdrage.toegevoegd`).
 - `write` bepaalt of je alle types mag schrijven (zoals `gesprek.afgesloten` of `deelname.toegevoegd`).
@@ -33,7 +33,7 @@ gesprek:
 
 ## Rechten zijn relaties, en relaties zijn data
 
-De kracht zit in de paden. Teams, zaaktypen en lidmaatschappen zijn gewone onderwerpen in het register, met een eigen klein profiel (`nl.vng.organisatie`): een team heeft `leden`, een zaaktype verwijst naar een `team`. De leesregel loopt via een pad naar `$actor`.
+De kracht zit in de paden. Teams, zaaktypen en lidmaatschappen zijn gewone onderwerpen in het register, met een eigen klein profiel (`nl.vng.organisatie`): een team heeft `leden`, een zaaktype verwijst naar een `team`. De leesregel loopt via een pad naar `actor()`.
 
 Zo zijn alle gevallen uit MijnGesprekken één regel:
 
@@ -51,7 +51,7 @@ Vertegenwoordiging werkt hetzelfde. Een gemachtigde staat als deelname met rol `
 ## Hoe het in de engine werkt
 
 1. De query van de client wordt geparst. Variabelen zijn daar niet toegestaan.
-2. De leesregel van het type wordt geparst bij het registreren van het profiel, en bij elke query ingevuld met `$actor`.
+2. De leesregel van het type wordt geparst bij het registreren van het profiel, en bij elke query wordt `actor()` ingevuld.
 3. De engine voert `filter van de client AND leesregel` uit, als één boom, met dezelfde indexen en grenzen. Dat gebeurt vóór paginering, dus tellingen, offsets en cursors lekken niets.
 4. De veldregel bepaalt de representatie, ook van elke `include`. Een verborgen veld ziet eruit als een veld zonder waarde.
 5. Filteren, sorteren en zoeken op een veld dat je niet mag zien, geeft dezelfde fout als een onbekend veld.
@@ -70,7 +70,7 @@ Een verlopen token sluit de stroom niet hard af. De server stuurt `auth.expiring
 
 Een event mag als het onderwerp vóór het event door je `append`- of `write`-regel komt. Bij een nieuw onderwerp telt de stand ná het event: je kunt geen gesprek starten waarin je zelf niet zou mogen schrijven. Een weigering is altijd één 403 zonder details, zodat je niet kunt aftasten welke onderwerpen bestaan (zoals in ZaakChat #28).
 
-Systemen zoals Open Zaak of OneGround zijn ook een `$actor`. Het profiel geeft hun rechten per `source`: OneGround mag `nl.vng.gesprekken.*` schrijven met `source` gelijk aan zijn eigen URI. Alleen de bron die een onderwerp heeft gemaakt, mag het wissen (lab ADR-0004).
+Systemen zoals Open Zaak of OneGround zijn ook een `actor()`. Het profiel geeft hun rechten per `source`: OneGround mag `nl.vng.gesprekken.*` schrijven met `source` gelijk aan zijn eigen URI. Alleen de bron die een onderwerp heeft gemaakt, mag het wissen (lab ADR-0004).
 
 ## Centraal beheer
 

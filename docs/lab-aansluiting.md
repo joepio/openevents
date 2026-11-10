@@ -17,7 +17,7 @@ Het idee is dat spec en code gelijk oplopen: elke wijziging in het lab heeft een
 | `patterns/sync-feed` next | op `main` | `feedCursor` die vóór de snapshot wordt vastgesteld, `redact`-records, opake cursors |
 | `patterns/event-stream` next | in PR #47 | SSE-contract |
 | `patterns/json-commit` next | in PR #49 | `POST /events` met `json.commit.transaction` |
-| `patterns/query` next | schets in PR #53 | `POST /query` met CloudEvents-filters |
+| `patterns/query` next | schets in PR #53 | `POST /query`; de filters gaan van CloudEvents-dialecten naar CQL2-JSON |
 | `patterns/file-upload` next | op `main` | bijlagen via `dataref` |
 | `patterns/error-responses` v0.0.1 | op `main` | `problem+json` |
 | `patterns/federated-auth` next | op `main` | tokens van buiten, geen eigen login |
@@ -44,11 +44,12 @@ Deze lijst is het werkpakket voor het lab. Elke regel wordt een commit in een la
 
 ### `patterns/query` next (PR #53)
 
-1. **`path`-operator** over verwijzingen, maximaal 3 stappen.
+0. **Filtertaal naar CQL2-JSON** (OGC) met een begrensd profiel, inclusief tijd en ruimte, en de functie `actor()` voor regels. Dezelfde taal voor `GET /events`-abonnementen. Dit sluit aan op lab issue #51, dat CQL2-JSON al noemde.
+1. **Paden** in `property` over verwijzingen, maximaal 3 stappen.
 2. **`fields` en `include`** voor representaties, met de grenzen uit [query.md](query.md).
 3. **Benoemde views:** `GET`/`POST /views/{naam}`.
 4. **`feedCursor`** in elke respons, met de semantiek uit sync-feed.
-5. **Autorisatie is een query:** regels in dezelfde filtertaal met `$actor`, altijd met AND bij de query van de client, vóór paginering; tellingen alleen binnen rechten; verborgen velden zien eruit als afwezige. Dit wordt ook het voorstel voor lab issue #51.
+5. **Autorisatie is een query:** regels in dezelfde filtertaal met `actor()`, altijd met AND bij de query van de client, vóór paginering; tellingen alleen binnen rechten; verborgen velden zien eruit als afwezige. Dit wordt ook het voorstel voor lab issue #51.
 6. **Kostengrens:** `problem+json` type `query-too-expensive`.
 
 ### Nieuwe ADR

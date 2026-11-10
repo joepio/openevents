@@ -7,3 +7,5 @@
 | [0003](0003-query-krachtig-maar-begrensd.md) | Query: krachtig, maar begrensd op diepte, kosten en velden | Voorgesteld |
 | [0004](0004-autorisatie-als-filter.md) | Autorisatie is een query | Voorgesteld |
 | [0005](0005-wissen-met-crypto-shredding.md) | Wissen met crypto-shredding per onderwerp | Voorgesteld |
+| [0006](0006-filtertaal-cql2.md) | Filtertaal is CQL2 met een begrensd profiel | Voorgesteld |
+| [0007](0007-modules-in-wasm.md) | Domeinlogica in WASM-modules naast het register | Voorgesteld |

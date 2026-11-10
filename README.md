@@ -16,11 +16,12 @@ Tijdens het fieldlab MijnGesprekken (10 november 2026) bleek er belangstelling v
 |---|---|
 | Schrijven | `POST /events`: één CloudEvent of een JSON Commit-transactie (atomair, idempotent, optimistic concurrency) |
 | Volgen | `GET /events` als SSE, met filter en `Last-Event-ID` als cursor |
-| Bevragen | `POST /query` (later ook de HTTP-methode `QUERY`): filters, paden over verwijzingen, representaties met `include`, benoemde views |
+| Bevragen | `POST /query` (later ook de HTTP-methode `QUERY`): CQL2-filters met tijd en ruimte, paden over verwijzingen, representaties met `include`, benoemde views |
 | Live bevragen | een query geeft een snapshot plus `feedCursor`; daarna volg je dezelfde selectie via `GET /events` |
 | Profielen | eventtypes, dataschema's, projectieregels en beleid, tijdens runtime te registreren |
-| Autorisatie | een recht is een query: per type een leesregel in dezelfde filtertaal, met `$actor` uit het token en paden naar teams en deelnames; altijd met AND bij de query, vóór paginering, ook op de stroom |
+| Autorisatie | een recht is een query: per type een leesregel in dezelfde filtertaal, met `actor()` uit het token en paden naar teams en deelnames; altijd met AND bij de query, vóór paginering, ook op de stroom |
 | Wissen | crypto-shredding per onderwerp, plus tombstone-events |
+| Modules | domeinlogica (bezwaar, melden openbare ruimte) als kleine open WASM-modules naast het register: commands, reacties, timers, formulieren |
 | Opslag | eigen kern in Rust op een key-value-store achter een trait |
 
 ## Documentatie
@@ -31,6 +32,7 @@ Tijdens het fieldlab MijnGesprekken (10 november 2026) bleek er belangstelling v
 - [Autorisatie](docs/autorisatie.md): autorisatie als query, regels in het profiel, velden per rol
 - [Wissen en bewaren](docs/wissen.md): AVG, Archiefwet, crypto-shredding
 - [Profielen](docs/profielen.md): hoe een domein erop landt, met Gesprekken als eerste
+- [Modules](docs/modules.md): domeinlogica als kleine open modules, met bezwaar als voorbeeld
 - [Aansluiting op het VNG API Lab](docs/lab-aansluiting.md): welke patterns, en wat daar in `next` moet veranderen
 - [Roadmap](docs/roadmap.md)
 - [Besluiten (ADR's)](docs/adr/)

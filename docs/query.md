@@ -13,11 +13,13 @@ Content-Type: application/json
 {
   "type": "nl.vng.gesprekken.gesprek",
   "filter": {
-    "all": [
-      { "status": "open" },
-      { "aanleiding.zaak.zaaktype": "https://catalogi.example.nl/zaaktypen/wmo-1" }
+    "op": "and",
+    "args": [
+      { "op": "=", "args": [ { "property": "status" }, "open" ] },
+      { "op": "=", "args": [ { "property": "aanleiding.zaak.zaaktype" }, "https://catalogi.example.nl/zaaktypen/wmo-1" ] }
     ]
   },
+  "filter-lang": "cql2-json",
   "fields": ["onderwerp", "status", "laatsteBijdrage"],
   "include": {
     "deelnames": { "fields": ["rol", "partij"] },
@@ -41,29 +43,48 @@ Antwoord:
 
 ## Filtertaal
 
-De basis is de filtertaal uit [lab PR #53](https://github.com/VNG-Realisatie/vng-api-lab/pull/53), met de dialecten van de [CloudEvents Subscriptions API](https://github.com/cloudevents/spec/blob/main/subscriptions/spec.md). Een filter is een JSON-object:
+De filtertaal is [OGC CQL2](https://docs.ogc.org/is/21-065r2/21-065r2.html) met een begrensd profiel. Over de lijn gaat **CQL2-JSON**; in profielen en documentatie mag de leesbare **CQL2-tekst**, die bij het registreren wordt geparst tot dezelfde boom. Zie [ADR-0006](adr/0006-filtertaal-cql2.md).
 
-| Vorm | Betekenis |
+```text
+status = 'open' AND aanleiding.zaak.zaaktype = 'https://catalogi.example.nl/zaaktypen/wmo-1'
+```
+
+is in CQL2-JSON:
+
+```json
+{ "op": "and", "args": [
+  { "op": "=", "args": [ { "property": "status" }, "open" ] },
+  { "op": "=", "args": [ { "property": "aanleiding.zaak.zaaktype" }, "https://catalogi.example.nl/zaaktypen/wmo-1" ] }
+] }
+```
+
+Het profiel van OpenEvents op CQL2:
+
+| Groep | Operatoren | CQL2-conformanceklasse |
+|---|---|---|
+| vergelijken | `=`, `<>`, `<`, `<=`, `>`, `>=`, `isNull` | Basic CQL2 |
+| logisch | `and`, `or`, `not` | Basic CQL2 |
+| uitgebreid | `in`, `between`, `like` (alleen met een vast begin) | Advanced Comparison Operators |
+| tijd | `t_before`, `t_after`, `t_during`, `t_intersects` | Temporal Functions (deel) |
+| ruimte | `s_intersects`, `s_within`, `s_dwithin` (afstand in meters) met GeoJSON | Spatial Functions (deel) |
+| lijsten | `a_contains`, `a_overlaps` | Array Functions (deel) |
+| tekst | `text(veld, 'zoekterm')`, alleen op velden die het profiel als doorzoekbaar markeert | eigen functie |
+| wie vraagt | `actor()`, `actor('rol')` | eigen functie, alleen in regels van het profiel |
+
+En twee afspraken die het filter krachtig maken:
+
+| Afspraak | Betekenis |
 |---|---|
-| `{ "status": "open" }` | korte vorm van `exact`: veld is gelijk aan waarde |
-| `{ "exact": { "status": "open" } }` | idem, lange vorm |
-| `{ "prefix": { ... } }`, `{ "suffix": { ... } }` | begint of eindigt met |
-| `{ "in": { "status": ["open", "wacht"] } }` | een van de waarden |
-| `{ "gte": { ... } }`, `{ "lte": { ... } }` | groter of gelijk, kleiner of gelijk |
-| `{ "exists": "einddatum" }` | veld heeft een waarde |
-| `{ "all": [ ... ] }`, `{ "any": [ ... ] }`, `{ "not": { ... } }` | en, of, niet |
-| `{ "text": { "onderwerp": "parkeervergunning" } }` | vrije tekst, alleen op velden die het profiel als doorzoekbaar markeert |
+| **pad** in een `property`, zoals `aanleiding.zaak.zaaktype` | volg verwijzingen tot het veld; maximaal 3 stappen. Over een lijst betekent het "een van de elementen", dus `deelnames.partij = 'x'` matcht als een deelname die partij heeft. |
+| **`actor()`** | wie er vraagt, uit het token; `actor('rol')` is een claim. Alleen in regels van het profiel, nooit in een filter van een client. |
 
-En twee dingen die het filter krachtig maken:
-
-| Element | Betekenis |
-|---|---|
-| **pad** in een veldnaam, zoals `aanleiding.zaak.zaaktype` | volg verwijzingen tot het veld; maximaal 3 stappen. Over een lijst betekent het "een van de elementen", dus `deelnames.partij` matcht als een deelname die partij heeft. |
-| **variabele** `$actor`, `$actor.<claim>` | wie er vraagt, uit het token. Alleen in regels van het profiel, nooit in een filter van een client. |
-
-Alleen velden die het profiel als `queryable` markeert, mogen in een filter of sortering staan. Zo weet de engine dat er een index voor is, en weet de beheerder wat er bevraagbaar is.
+Alleen velden die het profiel als `queryable` markeert, mogen in een filter of sortering staan. Zo weet de engine dat er een index voor is, en weet de beheerder wat er bevraagbaar is. Een onbekend veld of een operator buiten het profiel geeft een `problem+json`-fout.
 
 Dezelfde taal werkt op `GET /events` (een abonnement) en in de regels van een profiel.
+
+### Geo
+
+Ruimtelijke filters zijn nodig voor modules zoals melden openbare ruimte: "meldingen in deze wijk" is `s_within(locatie, <polygoon>)`, "binnen 50 meter" is `s_dwithin(locatie, <punt>, 50)`. Velden met `format: geometry` in het profiel krijgen een ruimtelijke index (R-tree of geohash op de KV-store). Dat is de belangrijkste reden voor CQL2: ruimte en tijd zijn daar standaard, en de Rust-crate `cql2` kan beide coderingen al lezen.
 
 ## Paden over verwijzingen
 
@@ -71,7 +92,7 @@ Dit is wat ZGW vandaag niet kan, en waar de G4 last van heeft: "zaken waar ik be
 
 De engine houdt bij elke verwijzing in een projectie twee indexen bij: vooruit (`idx_field` op het verwijzende veld) en achteruit (`idx_ref`). Een pad wordt van de meest selectieve kant uitgevoerd. "Gesprekken bij zaken van zaaktype X" wordt dus: zaken met zaaktype X uit `idx_field`, daarna via `idx_ref` de gesprekken die ernaar verwijzen.
 
-Paden zijn ook wat autorisatie simpel maakt: "gesprekken bij zaken waarvan het zaaktype bij een team hoort waar ik lid van ben" is `aanleiding.zaak.zaaktype.team.leden = $actor`. Zie [autorisatie](autorisatie.md).
+Paden zijn ook wat autorisatie simpel maakt: "gesprekken bij zaken waarvan het zaaktype bij een team hoort waar ik lid van ben" is `aanleiding.zaak.zaaktype.team.leden = actor()`. Zie [autorisatie](autorisatie.md).
 
 Een pad kan alleen over onderwerpen die in hetzelfde register staan. Verwijzingen naar buiten (een zaak in Open Zaak) kunnen meedoen als het register een **spiegel** van die bron bijhoudt: een profiel dat de events van die bron volgt en een kleine projectie bewaart (bijvoorbeeld zaak-URL, zaaktype en betrokkenen). Dat is precies het "per-domein register" uit lab ADR-0006 en de ingest uit lab ADR-0004.
 
@@ -92,7 +113,7 @@ PUT /views/mijn-open-gesprekken
 {
   "query": {
     "type": "nl.vng.gesprekken.gesprek",
-    "filter": { "status": "open" },
+    "filter": { "op": "=", "args": [ { "property": "status" }, "open" ] },
     "fields": ["onderwerp", "status", "laatsteBijdrage", "ongelezen"],
     "sort": [{ "field": "laatsteBijdrage.tijd", "order": "desc" }]
   }
@@ -144,4 +165,4 @@ Een `total` is optioneel en altijd binnen de rechten berekend. Is dat te duur, d
 - Geen vrije joins over willekeurige velden; alleen paden over verwijzingen die het profiel kent.
 - Geen aggregaties in de eerste versie (gemiddelden, groeperen). Die zijn een aparte autorisatievraag.
 - Geen GraphQL, OData, Elasticsearch-DSL of JSON Logic. De redenen staan in lab PR #53. GraphQL blijft een kandidaat voor een tweede ingang op dezelfde engine.
-- **Open keuze:** CQL2-JSON (OGC), genoemd in lab issue #51, is een alternatief voor de CloudEvents-dialecten. Het is rijker, maar deelt geen taal met CloudEvents-abonnementen. Zolang de engine een geparste boom gebruikt, is de syntaxis later nog te wisselen.
+- Geen CloudEvents-filterdialecten (`exact`, `prefix`, `all`). Die waren het eerste voorstel in lab PR #53, maar missen vergelijkingen, tijd en ruimte. Een abonnement op `GET /events` gebruikt dus ook CQL2.

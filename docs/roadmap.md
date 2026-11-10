@@ -12,14 +12,14 @@ Elke fase eindigt met iets dat te laten zien is, en met de bijbehorende wijzigin
 - Rust-crate `openevents-core`: KV-trait met een embedded implementatie, log, idempotentie, JSON Commit (overgenomen uit ZaakChat `commits.rs`), projectie met declaratieve regels, `head` en 412.
 - `openevents-server`: `POST /events`, `GET /events` (SSE met `Last-Event-ID` en tickets), `GET /subjects/{subject}` en de tijdlijn.
 - Profielen tijdens runtime met JSON Schema-validatie.
-- Lees- en schrijfregels per type (eerst zonder paden, alleen `deelnames.partij: $actor`); OIDC-tokens.
+- Lees- en schrijfregels per type (eerst zonder paden, alleen `deelnames.partij = actor()`); OIDC-tokens.
 - Conformance-tests in een aparte map, zodat ze ook tegen andere implementaties kunnen draaien.
 
 **Demo:** de Gesprekken API (OneGround-fork) publiceert naar OpenEvents; de medewerkerconsole leest via SSE. Op DemoStack naast de MijnGesprekken-demo.
 
 ## Fase 2: query (2 tot 3 weken)
 
-- `POST /query` met de filtertaal uit lab PR #53, `fields`, `include` en `path`.
+- `POST /query` met CQL2-JSON (crate `cql2`), paden, `fields` en `include`; ruimtelijke en tijdsindexen.
 - Indexen op velden en verwijzingen; kostenschatting en grenzen.
 - Views.
 - `feedCursor` en live volgen met hetzelfde filter.

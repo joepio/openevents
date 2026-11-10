@@ -9,7 +9,7 @@ Lab ADR-0003 koos een begrensde grammatica voor `/zoek` per API, omdat elke leve
 
 ## Beslissing
 
-`POST /query` (later ook `QUERY`) met de filtertaal van lab PR #53, uitgebreid met paden over verwijzingen, `fields`, `include` en benoemde views. Elke query heeft vaste grenzen en een kostenschatting vooraf. Elke respons heeft een `feedCursor` zodat de client live verder kan via `GET /events`.
+`POST /query` (later ook `QUERY`) met CQL2-JSON als filtertaal (ADR-0006), uitgebreid met paden over verwijzingen, `fields`, `include` en benoemde views. Elke query heeft vaste grenzen en een kostenschatting vooraf. Elke respons heeft een `feedCursor` zodat de client live verder kan via `GET /events`.
 
 Zie [query.md](../query.md) voor de details.
 

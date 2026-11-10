@@ -11,7 +11,7 @@ Een eerste ontwerp liet een externe beslisser (AuthZEN) een filter teruggeven in
 
 ## Beslissing
 
-Een recht is een filter in dezelfde taal als `/query`, met `$actor` als variabele. Elk type in een profiel heeft regels voor `read`, `append` en `write`, en optioneel velden per rol. Relaties die voor rechten nodig zijn (teams, zaaktypen, lidmaatschap, deelnames) zijn data in het register. Een regel volgt daar een pad naar `$actor`.
+Een recht is een filter in dezelfde taal als `/query`, met `actor()` als functie. Elk type in een profiel heeft regels voor `read`, `append` en `write`, en optioneel velden per rol. Relaties die voor rechten nodig zijn (teams, zaaktypen, lidmaatschap, deelnames) zijn data in het register. Een regel volgt daar een pad naar `actor()`.
 
 De engine voert altijd `filter van de client AND leesregel` uit als één boom, vóór paginering, en past de veldregel toe op elke representatie en op de stroom.
 

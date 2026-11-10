@@ -43,7 +43,7 @@ Regels die iets laten gebeuren, zijn geen onderdeel van het profiel maar kleine 
 - een gesprek sluiten na 3 dagen zonder bijdrage van de gemeente
 - een klantcontact in Open Klant aanmaken bij afsluiten
 
-Een consumer is een gewone `$actor` met een eigen schrijfregel. Zo blijft de geschiedenis compleet, en is elk automatisch event te herleiden tot wie het schreef.
+Een consumer is een gewone `actor()` met een eigen schrijfregel. Zo blijft de geschiedenis compleet, en is elk automatisch event te herleiden tot wie het schreef.
 
 ## Versies
 
