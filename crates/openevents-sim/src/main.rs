@@ -1,15 +1,18 @@
-//! openevents-sim: sends a steady stream of semi-realistic events to an OpenEvents in
-//! dev mode (OPENEVENTS_DEV_AUTH=true), using the example profiles `nl.vng.meldingen`,
+//! openevents-sim: sends a stream of semi-realistic events to an OpenEvents in dev mode
+//! (OPENEVENTS_DEV_AUTH=true), using the example profiles `nl.vng.meldingen`,
 //! `nl.vng.vergunningen` and `nl.vng.gesprekken`.
 //!
-//! Every case (a melding, a vergunningaanvraag, a gesprek) is a script of events that is
-//! played step by step, interleaved with other cases. Gesprekken are linked to their zaak
-//! via `aanleiding.zaak`. Actors post with their own dev token, so the read and write
-//! rules of the profiles apply exactly as for real clients.
+//! Every zaak is a scenario: a list of steps with realistic gaps between them. Meldingen
+//! come in via a meldingen-API (Signalen) or the KCC, aanvragen via the Omgevingsloket,
+//! and gesprekken are linked to their zaak via `aanleiding.zaak`. Every actor posts with
+//! its own dev token, so the read and write rules of the profiles apply exactly as for
+//! real clients.
 //!
-//! Usage: openevents-sim [--base URL] [--rate EVENTS_PER_SEC] [--count N] [--active N] [--seed N]
+//! With `--backfill N` it first writes N zaken as history (event times in the past, steps
+//! that would lie in the future are left out so recent zaken stay open). Then it plays
+//! zaken live, interleaved, until `--count` is reached.
 
-use chrono::{Duration as Days, Local, Utc};
+use chrono::{DateTime, Duration as Mins, Local, Utc};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -18,27 +21,39 @@ use std::collections::VecDeque;
 use std::time::Duration;
 
 const ID: &str = "https://id.example.nl/";
+const G: &str = "nl.vng.gesprekken";
+const M: &str = "nl.vng.meldingen.melding";
+const V: &str = "nl.vng.vergunningen.aanvraag";
+
+// ---------- actors ----------
 
 #[derive(Clone)]
 struct Actor {
     id: String,
-    name: String,
+    slug: String,
     claims: Vec<(&'static str, &'static str)>,
+    source: &'static str,
 }
 
 impl Actor {
-    fn new(name: &str, claims: &[(&'static str, &'static str)]) -> Actor {
+    fn new(slug: &str, claims: &[(&'static str, &'static str)]) -> Actor {
+        let rol = claims
+            .iter()
+            .find(|(k, _)| *k == "rol")
+            .map(|(_, v)| *v)
+            .unwrap_or("");
+        let source = match (slug, rol) {
+            ("signalen", _) => "https://signalen.demodam.nl",
+            ("omgevingsloket", _) => "https://omgevingsloket.nl",
+            (_, "kcc") => "https://kcc.demodam.nl",
+            (_, "medewerker") => "https://zaaksysteem.demodam.nl",
+            _ => "https://mijn.demodam.nl",
+        };
         Actor {
-            id: format!("{ID}{name}"),
-            name: name.to_string(),
+            id: format!("{ID}{slug}"),
+            slug: slug.to_string(),
             claims: claims.to_vec(),
-        }
-    }
-    fn module(id: &str, claims: &[(&'static str, &'static str)]) -> Actor {
-        Actor {
-            id: id.to_string(),
-            name: id.rsplit(':').next().unwrap_or(id).to_string(),
-            claims: claims.to_vec(),
+            source,
         }
     }
     fn token(&self) -> String {
@@ -48,147 +63,272 @@ impl Actor {
         }
         t
     }
-    fn team(&self) -> &'static str {
-        self.claims
-            .iter()
-            .find(|(k, _)| *k == "team")
-            .map(|(_, v)| *v)
-            .unwrap_or("")
-    }
 }
 
+// ---------- scenarios ----------
+
 struct Ev {
+    /// Minutes after the previous step of the same zaak (used for history).
+    after: i64,
     actor: Actor,
-    source: &'static str,
     kind: String,
     subject: String,
     label: String,
     data: Value,
 }
 
-enum Item {
-    Ev(Ev),
-    Spawn(Case),
+/// A zaak and its gesprekken as a list of steps.
+struct Seq {
+    start: DateTime<Utc>,
+    t: i64,
+    steps: VecDeque<Ev>,
 }
 
-struct Case {
-    items: VecDeque<Item>,
+impl Seq {
+    fn new(start: DateTime<Utc>) -> Seq {
+        Seq {
+            start,
+            t: 0,
+            steps: VecDeque::new(),
+        }
+    }
+    fn at(
+        &mut self,
+        after: i64,
+        actor: &Actor,
+        kind: &str,
+        subject: &str,
+        label: &str,
+        data: Value,
+    ) {
+        self.t += after;
+        self.steps.push_back(Ev {
+            after,
+            actor: actor.clone(),
+            kind: kind.to_string(),
+            subject: subject.to_string(),
+            label: label.to_string(),
+            data,
+        });
+    }
+    /// A date `days` after a step that happens `after` minutes from now in this zaak.
+    fn date(&self, after: i64, days: i64) -> String {
+        (self.start + Mins::minutes(self.t + after) + Mins::days(days))
+            .date_naive()
+            .to_string()
+    }
 }
 
-struct World {
-    rng: StdRng,
-    inwoners: Vec<Actor>,
-    personas_inwoner: Vec<Actor>,
-    teams: Vec<(&'static str, Vec<Actor>)>,
-    kcc: Vec<Actor>,
-    router: Actor,
-    nr: u32,
+struct MeldingSoort {
+    categorie: &'static str,
+    sub: &'static str,
+    team: &'static str,
+    teksten: &'static [&'static str],
+    vraag: &'static str,
+    uitvoerder: &'static str,
 }
 
-const STRATEN: &[(&str, &str, f64, f64)] = &[
-    ("Oudegracht", "Centrum", 5.1196, 52.0894),
-    ("Lauwerecht", "Noordoost", 5.1190, 52.1010),
-    ("Biltstraat", "Oost", 5.1325, 52.0935),
-    ("Burgemeester Reigerstraat", "Oost", 5.1350, 52.0880),
-    ("Kardinaal de Jongweg", "Noordoost", 5.1390, 52.1060),
-    ("Kanaalstraat", "West", 5.1035, 52.0905),
-    ("Vleutenseweg", "West", 5.0920, 52.0915),
-    ("Amsterdamsestraatweg", "Noordwest", 5.0995, 52.1060),
-    ("Roelantdreef", "Overvecht", 5.1150, 52.1210),
-    ("Rijnlaan", "Zuid", 5.1080, 52.0740),
-    ("Columbuslaan", "Zuidwest", 5.0890, 52.0780),
-    ("Grauwaart", "Leidsche Rijn", 5.0450, 52.1000),
+const MELDINGEN: &[MeldingSoort] = &[
+    MeldingSoort {
+        categorie: "Wegen, verkeer, straatmeubilair",
+        sub: "Losse stoeptegel",
+        team: "buitenruimte",
+        teksten: &[
+            "Er ligt een stoeptegel los voor nummer {nr}, mijn buurvrouw is er bijna over gestruikeld.",
+            "Meerdere tegels liggen scheef en los, gevaarlijk voor mensen met een rollator.",
+        ],
+        vraag: "Kunt u ongeveer zeggen wanneer dit wordt gemaakt? Er lopen hier veel ouderen.",
+        uitvoerder: "Stratenmakersbedrijf Van Dijk",
+    },
+    MeldingSoort {
+        categorie: "Wegen, verkeer, straatmeubilair",
+        sub: "Gat in de weg",
+        team: "buitenruimte",
+        teksten: &[
+            "Diep gat in het wegdek, fietsers moeten uitwijken naar de rijbaan.",
+            "Na de vorst is er een flink gat in de weg ontstaan bij de kruising.",
+        ],
+        vraag: "Is het mogelijk om alvast een bord of afzetting te plaatsen?",
+        uitvoerder: "Wegenonderhoud BV",
+    },
+    MeldingSoort {
+        categorie: "Straatverlichting",
+        sub: "Lantaarnpaal kapot",
+        team: "buitenruimte",
+        teksten: &[
+            "De lantaarnpaal bij het speeltuintje brandt al een week niet.",
+            "Lantaarnpaal knippert de hele nacht aan en uit.",
+        ],
+        vraag: "Het is 's avonds echt donker in de straat, kan het voor het weekend?",
+        uitvoerder: "de netbeheerder",
+    },
+    MeldingSoort {
+        categorie: "Groen en water",
+        sub: "Boom of tak gevallen",
+        team: "buitenruimte",
+        teksten: &[
+            "Na de storm ligt er een grote tak over het fietspad.",
+            "Er hangt een afgebroken tak boven de stoep, die kan elk moment vallen.",
+        ],
+        vraag: "Moet ik de tak zelf aan de kant leggen of komt er iemand?",
+        uitvoerder: "Hoveniersbedrijf De Groene Hand",
+    },
+    MeldingSoort {
+        categorie: "Groen en water",
+        sub: "Verstopte put",
+        team: "buitenruimte",
+        teksten: &["Bij regen staat de hele straat blank, de putten zijn verstopt met bladeren."],
+        vraag: "Het water komt bijna tot aan onze voordeur, kan dit met spoed?",
+        uitvoerder: "Rioolservice West",
+    },
+    MeldingSoort {
+        categorie: "Afval",
+        sub: "Grofvuil naast container",
+        team: "afval",
+        teksten: &[
+            "Er staat een bank en een matras naast de ondergrondse container.",
+            "Iemand heeft vuilniszakken naast de container gezet, de meeuwen trekken ze open.",
+        ],
+        vraag: "Wordt de vervuiler hier ook op aangesproken?",
+        uitvoerder: "Afvalinzameling Demodam",
+    },
+    MeldingSoort {
+        categorie: "Afval",
+        sub: "Container vol of kapot",
+        team: "afval",
+        teksten: &[
+            "De papiercontainer zit vol en de klep klemt.",
+            "De pasjeslezer van de restafvalcontainer werkt niet.",
+        ],
+        vraag: "Waar kan ik mijn afval in de tussentijd kwijt?",
+        uitvoerder: "Afvalinzameling Demodam",
+    },
+    MeldingSoort {
+        categorie: "Overlast",
+        sub: "Geluidsoverlast horeca",
+        team: "handhaving",
+        teksten: &[
+            "Het café op de hoek draait na 01:00 nog harde muziek met de deuren open.",
+            "Elke vrijdagnacht veel lawaai van bezoekers die buiten blijven hangen.",
+        ],
+        vraag: "Dit gebeurt elke week. Wat kan de gemeente hier structureel aan doen?",
+        uitvoerder: "het boa-team Centrum",
+    },
+    MeldingSoort {
+        categorie: "Overlast",
+        sub: "Fout geparkeerde fietsen",
+        team: "handhaving",
+        teksten: &["Bij de ingang van het station staan tientallen fietsen op de geleidelijn voor blinden."],
+        vraag: "Worden de fietsen weggehaald of krijgen mensen eerst een waarschuwing?",
+        uitvoerder: "het fietsdepot",
+    },
 ];
 
-const MELDINGEN: &[(&str, &[&str])] = &[
-    (
-        "afval",
-        &[
-            "Volle container, er staan zakken naast.",
-            "Grofvuil op de stoep gezet, al drie dagen.",
-            "Ondergrondse container zit vast, klep gaat niet open.",
+struct AanvraagSoort {
+    activiteiten: &'static [&'static str],
+    omschrijving: &'static str,
+    bijlagen: &'static [&'static str],
+    adviseur: &'static str,
+    vraag: &'static str,
+    aanvulling: &'static [&'static str],
+    kosten: (u32, u32),
+    uitgebreid: bool,
+}
+
+const AANVRAGEN: &[AanvraagSoort] = &[
+    AanvraagSoort {
+        activiteiten: &["bouwen"],
+        omschrijving: "Plaatsen van een dakkapel aan de achterzijde, breedte 3,2 meter.",
+        bijlagen: &[
+            "bouwtekening-dakkapel.pdf",
+            "constructieberekening.pdf",
+            "foto-bestaande-situatie.jpg",
         ],
-    ),
-    (
-        "verlichting",
-        &[
-            "Lantaarnpaal brandt niet, erg donker 's avonds.",
-            "Straatlantaarn knippert de hele nacht.",
+        adviseur: "Welstandscommissie",
+        vraag: "Past de dakkapel binnen de welstandsnota?",
+        aanvulling: &["constructieberekening met handtekening constructeur"],
+        kosten: (8000, 18000),
+        uitgebreid: false,
+    },
+    AanvraagSoort {
+        activiteiten: &["kappen"],
+        omschrijving:
+            "Kappen van een eik in de voortuin vanwege wortelopdruk en schade aan de fundering.",
+        bijlagen: &["foto-boom.jpg", "situatieschets.pdf"],
+        adviseur: "Bomenconsulent",
+        vraag: "Is de boom waardevol en is herplant mogelijk?",
+        aanvulling: &["rapport boomveiligheidscontrole"],
+        kosten: (0, 0),
+        uitgebreid: false,
+    },
+    AanvraagSoort {
+        activiteiten: &["bouwen"],
+        omschrijving:
+            "Uitbreiding van de woonkamer met een aanbouw van 4 bij 3 meter aan de achtergevel.",
+        bijlagen: &[
+            "plattegrond.pdf",
+            "doorsnede.pdf",
+            "gevelaanzichten.pdf",
+            "BENG-berekening.pdf",
         ],
-    ),
-    (
-        "wegdek",
-        &[
-            "Diep gat in het fietspad, gevaarlijk.",
-            "Losliggende stoeptegels voor de ingang van de school.",
+        adviseur: "Welstandscommissie",
+        vraag: "Graag advies over materiaalgebruik en kleur.",
+        aanvulling: &["daglichtberekening", "toelichting afvoer hemelwater"],
+        kosten: (25000, 60000),
+        uitgebreid: false,
+    },
+    AanvraagSoort {
+        activiteiten: &["uitrit"],
+        omschrijving: "Aanleggen van een inrit van 3 meter breed naar de oprit.",
+        bijlagen: &["situatietekening-uitweg.pdf"],
+        adviseur: "Verkeerskundige",
+        vraag: "Is de uitweg verkeersveilig gezien de nabijgelegen school?",
+        aanvulling: &["maatvoering ten opzichte van de lantaarnpaal"],
+        kosten: (2000, 5000),
+        uitgebreid: false,
+    },
+    AanvraagSoort {
+        activiteiten: &["bouwen", "monument"],
+        omschrijving:
+            "Vervangen van kozijnen in de voorgevel door houten kozijnen met isolatieglas.",
+        bijlagen: &[
+            "bouwhistorische-verkenning.pdf",
+            "detailtekeningen-kozijnen.pdf",
+            "kleurenschema.pdf",
         ],
-    ),
-    (
-        "groen",
-        &[
-            "Grote tak afgebroken na de storm, ligt over het pad.",
-            "Heg groeit over het trottoir, rolstoel kan er niet langs.",
-        ],
-    ),
-    (
-        "overlast",
-        &[
-            "Geluidsoverlast van een feest, elke vrijdagnacht.",
-            "Hangjongeren bij het speeltuintje, veel rommel.",
-        ],
-    ),
-    (
-        "fietswrak",
-        &["Fietswrak al maanden aan het hek, zonder voorwiel."],
-    ),
-    (
-        "graffiti",
-        &[
-            "Graffiti op de muur van het buurthuis.",
-            "Tags op de bushalte.",
-        ],
-    ),
+        adviseur: "Erfgoedcommissie",
+        vraag: "Graag advies over de profielen en het glas.",
+        aanvulling: &["detail aansluiting kozijn op metselwerk"],
+        kosten: (15000, 40000),
+        uitgebreid: true,
+    },
+    AanvraagSoort {
+        activiteiten: &["monument"],
+        omschrijving: "Plaatsen van 14 zonnepanelen op het achterdakvlak.",
+        bijlagen: &["legplan.pdf", "foto-dakvlak.jpg"],
+        adviseur: "Erfgoedcommissie",
+        vraag: "Zijn de panelen vanaf de openbare weg zichtbaar?",
+        aanvulling: &["zichtlijnenstudie vanaf de straat"],
+        kosten: (6000, 12000),
+        uitgebreid: false,
+    },
 ];
 
-const AANVRAGEN: &[(&[&str], &str, &str)] = &[
-    (&["bouwen"], "Dakkapel aan de voorzijde", "regulier"),
-    (
-        &["bouwen"],
-        "Uitbouw aan de achterzijde van de woning",
-        "regulier",
-    ),
-    (
-        &["kappen"],
-        "Kappen van een eik in de achtertuin",
-        "regulier",
-    ),
-    (
-        &["uitrit"],
-        "Aanleg van een uitrit naar de oprit",
-        "regulier",
-    ),
-    (
-        &["bouwen", "monument"],
-        "Vervangen kozijnen van een gemeentelijk monument",
-        "regulier",
-    ),
-    (
-        &["gebruik"],
-        "Bovenwoning gebruiken als twee appartementen",
-        "uitgebreid",
-    ),
-    (
-        &["bouwen", "kappen"],
-        "Nieuwbouw garage, daarvoor twee bomen kappen",
-        "regulier",
-    ),
-];
-
-const DOCUMENTEN: &[&str] = &[
-    "de constructieberekening",
-    "een situatietekening",
-    "foto's van de huidige situatie",
-    "een bomeneffectanalyse",
+const STRATEN: &[(&str, &str)] = &[
+    ("Kerkstraat", "Centrum"),
+    ("Molenweg", "Noord"),
+    ("Lindenlaan", "Oost"),
+    ("Havenkade", "Centrum"),
+    ("Beatrixstraat", "West"),
+    ("Populierenhof", "Zuid"),
+    ("Dorpsstraat", "Oud-Zuid"),
+    ("Schoolstraat", "Noord"),
+    ("Merelstraat", "West"),
+    ("Industrieweg", "Bedrijventerrein De Kamp"),
+    ("Julianaplein", "Centrum"),
+    ("Esdoornlaan", "Oost"),
+    ("Weidepad", "Zuid"),
+    ("Stationsweg", "Centrum"),
 ];
 
 const WMO: &[(&str, &str, &str)] = &[
@@ -209,452 +349,725 @@ const WMO: &[(&str, &str, &str)] = &[
     ),
 ];
 
-fn naam(a: &Actor) -> String {
-    let mut c = a.name.chars();
-    match c.next() {
-        Some(f) => f.to_uppercase().chain(c).collect(),
-        None => String::new(),
-    }
+struct World {
+    rng: StdRng,
+    inwoners: Vec<Actor>,
+    personas: Vec<Actor>,
+    teams: Vec<(&'static str, Vec<Actor>)>,
+    kcc: Vec<Actor>,
+    signalen: Actor,
+    olo: Actor,
+    gemachtigde: Actor,
 }
 
 impl World {
     fn new(seed: u64) -> World {
         let inw = |n: &str| Actor::new(n, &[("rol", "inwoner")]);
-        let med =
-            |n: &str, team: &'static str| Actor::new(n, &[("rol", "medewerker"), ("team", team)]);
+        let team = |name: &'static str, names: &[&str]| {
+            let list = names
+                .iter()
+                .map(|n| Actor::new(n, &[("rol", "medewerker"), ("team", name)]))
+                .collect();
+            (name, list)
+        };
         World {
             rng: StdRng::seed_from_u64(seed),
-            personas_inwoner: vec![inw("suzanne"), inw("karel"), inw("pieter")],
+            personas: ["priya", "jan", "suzanne", "karel"]
+                .iter()
+                .map(|n| inw(n))
+                .collect(),
             inwoners: [
-                "anouk", "bram", "fenna", "hamza", "ilse", "jesse", "lotte", "mohamed", "noor",
-                "ruben", "sanne", "thijs", "yara", "zeynep", "wouter", "esra",
+                "fatima", "henk", "lotte", "mohammed", "ingrid", "tim", "yara", "kees", "esther",
+                "daan", "sevda", "pieter", "anouk", "hamza", "ilse", "zeynep",
             ]
             .iter()
             .map(|n| inw(n))
             .collect(),
+            // The first of each team is a persona and gets half of the work.
             teams: vec![
-                (
-                    "buitenruimte",
-                    vec![
-                        med("daan", "buitenruimte"),
-                        med("joris", "buitenruimte"),
-                        med("linda", "buitenruimte"),
-                    ],
-                ),
-                (
-                    "reiniging",
-                    vec![med("ahmed", "reiniging"), med("petra", "reiniging")],
-                ),
-                (
-                    "handhaving",
-                    vec![med("bas", "handhaving"), med("mirjam", "handhaving")],
-                ),
-                (
-                    "vergunningen",
-                    vec![
-                        med("fatima", "vergunningen"),
-                        med("erik", "vergunningen"),
-                        med("sophie", "vergunningen"),
-                    ],
-                ),
-                ("wmo", vec![med("merve", "wmo"), med("ellen", "wmo")]),
+                team("buitenruimte", &["ahmed", "sanne", "dirk"]),
+                team("afval", &["wouter", "petra"]),
+                team("handhaving", &["bram", "noor"]),
+                team("vergunningen", &["femke", "rob"]),
+                team("wmo", &["merve", "ellen"]),
             ],
             kcc: vec![
                 Actor::new("kim", &[("rol", "kcc")]),
                 Actor::new("tom", &[("rol", "kcc")]),
             ],
-            router: Actor::module("urn:module:meldingen-routering", &[("rol", "regie")]),
-            nr: 0,
+            signalen: Actor::new("signalen", &[("rol", "systeem")]),
+            olo: Actor::new("omgevingsloket", &[("rol", "systeem")]),
+            gemachtigde: Actor::new("architectenbureau-de-boog", &[("rol", "gemachtigde")]),
         }
     }
 
-    /// One in three cases is for a persona, so the UI personas have something to see.
+    fn pick<T: Copy>(&mut self, list: &[T]) -> T {
+        *list.choose(&mut self.rng).unwrap()
+    }
+    fn kans(&mut self, p: f64) -> bool {
+        self.rng.gen_bool(p)
+    }
+    fn min(&mut self, lo: i64, hi: i64) -> i64 {
+        self.rng.gen_range(lo..=hi)
+    }
+
     fn inwoner(&mut self) -> Actor {
-        if self.rng.gen_bool(0.35) {
-            self.personas_inwoner.choose(&mut self.rng).unwrap().clone()
+        if self.kans(0.4) {
+            self.personas.choose(&mut self.rng).unwrap().clone()
         } else {
             self.inwoners.choose(&mut self.rng).unwrap().clone()
         }
     }
 
-    /// Personas (first in each team) get half of the work.
     fn medewerker(&mut self, team: &str) -> Actor {
-        let list = &self.teams.iter().find(|(t, _)| *t == team).unwrap().1;
-        if self.rng.gen_bool(0.5) {
+        let list = self
+            .teams
+            .iter()
+            .find(|(t, _)| *t == team)
+            .unwrap()
+            .1
+            .clone();
+        if self.kans(0.5) {
             list[0].clone()
         } else {
             list.choose(&mut self.rng).unwrap().clone()
         }
     }
 
-    fn zaaknummer(&mut self, prefix: &str) -> String {
-        self.nr += 1;
+    fn kcc_medewerker(&mut self) -> Actor {
+        self.kcc.choose(&mut self.rng).unwrap().clone()
+    }
+
+    fn nummer(&mut self, prefix: &str, start: DateTime<Utc>) -> String {
         format!(
-            "{prefix}-{}-{:05}",
-            Local::now().format("%Y"),
-            self.rng.gen_range(10_000..90_000) + self.nr
+            "{prefix}-{}-{:06}",
+            start.format("%Y"),
+            self.rng.gen_range(100_000..999_999)
         )
     }
 
     fn plek(&mut self) -> (String, String, Value) {
-        let (straat, wijk, lon, lat) = *STRATEN.choose(&mut self.rng).unwrap();
+        let (straat, wijk) = self.pick(STRATEN);
         let nr = self.rng.gen_range(1..180);
-        let lon = lon + self.rng.gen_range(-0.0015..0.0015);
-        let lat = lat + self.rng.gen_range(-0.0010..0.0010);
-        let r = |x: f64| (x * 1e6).round() / 1e6;
+        let r = |x: f64| (x * 1e5).round() / 1e5;
+        let lon = r(5.10 + self.rng.gen::<f64>() * 0.05);
+        let lat = r(52.08 + self.rng.gen::<f64>() * 0.04);
         (
-            format!("{straat} {nr}"),
+            format!("{straat} {nr}, Demodam"),
             wijk.to_string(),
-            json!({ "type": "Point", "coordinates": [r(lon), r(lat)] }),
+            json!({ "type": "Point", "coordinates": [lon, lat] }),
         )
     }
 
-    fn new_case(&mut self) -> Case {
+    fn scenario(&mut self, start: DateTime<Utc>) -> Seq {
         match self.rng.gen_range(0..100) {
-            0..=54 => self.melding(),
-            55..=84 => self.vergunning(),
-            _ => self.wmo_gesprek(),
+            0..=59 => self.melding(start),
+            60..=89 => self.vergunning(start),
+            _ => self.wmo_gesprek(start),
         }
     }
 
-    fn melding(&mut self) -> Case {
-        let subject = format!("urn:uuid:{}", uuid::Uuid::now_v7());
-        let nummer = self.zaaknummer("MOR");
-        let melder = self.inwoner();
-        let (categorie, teksten) = *MELDINGEN.choose(&mut self.rng).unwrap();
-        let omschrijving = teksten.choose(&mut self.rng).unwrap().to_string();
-        let team = match categorie {
-            "afval" | "fietswrak" => "reiniging",
-            "overlast" => "handhaving",
-            _ => "buitenruimte",
-        };
+    fn melding(&mut self, start: DateTime<Utc>) -> Seq {
+        let m = &MELDINGEN[self.rng.gen_range(0..MELDINGEN.len())];
+        let inwoner = self.inwoner();
+        let mw = self.medewerker(m.team);
+        let nr = self.nummer("MOR", start);
+        let zaak = format!("https://zaken.demodam.nl/meldingen/{nr}");
         let (adres, wijk, locatie) = self.plek();
-        let via_kcc = self.rng.gen_bool(0.2);
-        let (indiener, kanaal) = if via_kcc {
-            (self.kcc.choose(&mut self.rng).unwrap().clone(), "telefoon")
+        let huisnr = self.rng.gen_range(1..120).to_string();
+        let tekst = self.pick(m.teksten).replace("{nr}", &huisnr);
+        let (indiener, kanaal) = if self.kans(0.2) {
+            (self.kcc_medewerker(), "telefoon")
         } else {
             (
-                melder.clone(),
-                *["app", "website"].choose(&mut self.rng).unwrap(),
+                self.signalen.clone(),
+                self.pick(&["app", "app", "website", "e-mail"]),
             )
         };
-        let behandelaar = self.medewerker(team);
-        let m = "nl.vng.meldingen.melding";
-        let ev = |actor: &Actor, source, t: &str, data: Value| {
-            Item::Ev(Ev {
-                actor: actor.clone(),
-                source,
-                kind: format!("{m}.{t}"),
-                subject: subject.clone(),
-                label: nummer.clone(),
-                data,
-            })
-        };
-        let mut items = VecDeque::new();
-        items.push_back(ev(
+        let prioriteit = self.pick(&["normaal", "normaal", "laag", "hoog"]);
+        let fotos = self.pick(&[0, 1, 1, 2, 3]);
+        let mut s = Seq::new(start);
+        s.at(
+            0,
             &indiener,
-            "urn:sim:mijnomgeving",
-            "gedaan",
+            &format!("{M}.gedaan"),
+            &zaak,
+            &nr,
             json!({
-                "zaaknummer": nummer, "categorie": categorie, "omschrijving": omschrijving,
-                "locatie": locatie, "adres": adres, "wijk": wijk, "kanaal": kanaal,
-                "melder": { "partij": melder.id, "rol": "inwoner" }
+                "zaaknummer": nr, "categorie": m.categorie, "subcategorie": m.sub,
+                "omschrijving": tekst, "locatie": locatie, "adres": adres, "wijk": wijk,
+                "kanaal": kanaal, "team": m.team, "prioriteit": prioriteit, "fotos": fotos,
+                "melder": { "partij": inwoner.id, "rol": "inwoner" }
             }),
-        ));
-        items.push_back(ev(
-            &self.router,
-            "urn:sim:routering",
-            "toegewezen",
-            json!({ "team": team }),
-        ));
-        items.push_back(ev(
-            &behandelaar,
-            "urn:sim:zaaksysteem",
-            "in_behandeling_genomen",
-            json!({ "behandelaar": behandelaar.id }),
-        ));
-        if self.rng.gen_bool(0.3) {
-            let vraag = format!(
-                "Ik heb een melding gedaan over {adres} ({categorie}). Wanneer wordt dit opgepakt?"
+        );
+        let a = self.min(20, 900);
+        s.at(
+            a,
+            &mw,
+            &format!("{M}.toegewezen"),
+            &zaak,
+            &nr,
+            json!({ "behandelaar": mw.id }),
+        );
+
+        // A gesprek next to the melding: the inwoner asks, or the medewerker needs more.
+        let mut gesprek: Option<(String, String)> = None;
+        let r: f64 = self.rng.gen();
+        if r < 0.35 {
+            let g = format!("urn:uuid:{}", uuid::Uuid::now_v7());
+            let onderwerp = format!("Vraag over melding {nr}");
+            let antwoord = self.pick(&[
+                "We hebben het ingepland, de verwachting is binnen 5 werkdagen.",
+                "Goed dat u het meldt. Een collega gaat vandaag of morgen kijken.",
+                "We hebben een tijdelijke afzetting geplaatst, herstel volgt deze week.",
+            ]);
+            let a = self.min(30, 600);
+            s.at(
+                a,
+                &inwoner,
+                &format!("{G}.gesprek.gestart"),
+                &g,
+                &onderwerp,
+                json!({
+                    "onderwerp": onderwerp, "team": m.team, "aanleiding": { "zaak": zaak },
+                    "initiatiefnemer": { "partij": inwoner.id, "rol": "inwoner" }
+                }),
             );
-            let antwoord = "Bedankt voor uw bericht. Een collega gaat er deze week naartoe.";
-            items.push_back(Item::Spawn(self.gesprek(
-                &melder,
-                &behandelaar,
-                true,
-                &format!("Vraag over melding {nummer}"),
-                Some(&subject),
-                &[
-                    (true, &vraag),
-                    (false, antwoord),
-                    (true, "Fijn, dank u wel!"),
-                ],
-                "Vraag beantwoord",
-            )));
+            s.at(
+                1,
+                &inwoner,
+                &format!("{G}.bijdrage.toegevoegd"),
+                &g,
+                &onderwerp,
+                json!({ "tekst": m.vraag }),
+            );
+            let a = self.min(30, 400);
+            s.at(
+                a,
+                &mw,
+                &format!("{G}.deelname.toegevoegd"),
+                &g,
+                &onderwerp,
+                json!({ "partij": mw.id, "rol": "behandelaar" }),
+            );
+            s.at(
+                2,
+                &mw,
+                &format!("{G}.bijdrage.toegevoegd"),
+                &g,
+                &onderwerp,
+                json!({ "tekst": antwoord, "automatisch": false }),
+            );
+            gesprek = Some((g, onderwerp));
+        } else if r < 0.6 {
+            let g = format!("urn:uuid:{}", uuid::Uuid::now_v7());
+            let onderwerp = format!("Aanvullende vraag bij melding {nr}");
+            let straat = adres.split(',').next().unwrap_or(&adres).to_string();
+            let vraag = self
+                .pick(&[
+                    "Wij kunnen de locatie bij {s} niet goed vinden. Kunt u een foto sturen?",
+                    "Is het nog steeds zo, of is het inmiddels opgelost?",
+                    "Klopt het dat het om de kant van de school gaat?",
+                ])
+                .replace("{s}", &straat);
+            let antwoord = self.pick(&[
+                "Ja, het is er nog steeds. Ik heb net een foto bij de melding gezet.",
+                "Aan de kant van de school inderdaad, vlak bij het zebrapad.",
+                "Het is zelfs erger geworden sinds gisteren.",
+            ]);
+            let a = self.min(10, 240);
+            s.at(
+                a,
+                &mw,
+                &format!("{G}.gesprek.gestart"),
+                &g,
+                &onderwerp,
+                json!({
+                    "onderwerp": onderwerp, "team": m.team, "aanleiding": { "zaak": zaak },
+                    "initiatiefnemer": { "partij": mw.id, "rol": "behandelaar" }
+                }),
+            );
+            s.at(
+                1,
+                &mw,
+                &format!("{G}.deelname.toegevoegd"),
+                &g,
+                &onderwerp,
+                json!({ "partij": inwoner.id, "rol": "inwoner" }),
+            );
+            s.at(
+                1,
+                &mw,
+                &format!("{G}.bijdrage.toegevoegd"),
+                &g,
+                &onderwerp,
+                json!({ "tekst": vraag, "automatisch": false }),
+            );
+            let a = self.min(20, 400);
+            s.at(
+                a,
+                &inwoner,
+                &format!("{G}.bijdrage.toegevoegd"),
+                &g,
+                &onderwerp,
+                json!({ "tekst": antwoord }),
+            );
+            s.at(
+                2,
+                &inwoner,
+                &format!("{M}.aangevuld"),
+                &zaak,
+                &nr,
+                json!({ "tekst": "Extra foto toegevoegd via het gesprek.", "fotos": 1 }),
+            );
+            gesprek = Some((g, onderwerp));
+        } else if r < 0.75 {
+            let tekst = self.pick(&[
+                "Het wordt steeds erger.",
+                "Vanochtend is er bijna een fietser gevallen.",
+                "Inmiddels hebben meer buren hier last van.",
+            ]);
+            let a = self.min(60, 1440);
+            s.at(
+                a,
+                &inwoner,
+                &format!("{M}.aangevuld"),
+                &zaak,
+                &nr,
+                json!({ "tekst": tekst }),
+            );
         }
-        items.push_back(ev(
-            &behandelaar,
-            "urn:sim:zaaksysteem",
-            "opgelost",
-            json!({ "toelichting": "Ter plaatse opgelost." }),
-        ));
-        if self.rng.gen_bool(0.12) {
-            items.push_back(ev(
-                &melder,
-                "urn:sim:mijnomgeving",
-                "heropend",
+        if self.kans(0.6) {
+            let a = self.min(120, 2880);
+            let dagen = self.rng.gen_range(1..10);
+            let datum = s.date(a, dagen);
+            s.at(
+                a,
+                &mw,
+                &format!("{M}.ingepland"),
+                &zaak,
+                &nr,
+                json!({ "datum": datum, "uitvoerder": m.uitvoerder, "toelichting": "Werkzaamheden ingepland." }),
+            );
+        }
+        let resultaat = match self.rng.gen_range(0..11) {
+            0..=7 => "opgelost",
+            8..=9 => "doorgezet naar derde",
+            _ => "dubbele melding",
+        };
+        let toelichting = match resultaat {
+            "opgelost" => format!("Het probleem is verholpen door {}.", m.uitvoerder),
+            "doorgezet naar derde" => {
+                format!("Doorgezet naar {}, die neemt het verder op.", m.uitvoerder)
+            }
+            _ => "Er was al een melding over deze locatie, die is inmiddels afgehandeld.".into(),
+        };
+        let a = self.min(240, 4320);
+        s.at(
+            a,
+            &mw,
+            &format!("{M}.afgehandeld"),
+            &zaak,
+            &nr,
+            json!({ "resultaat": resultaat, "toelichting": toelichting }),
+        );
+        if let Some((g, onderwerp)) = &gesprek {
+            let a = self.min(5, 120);
+            s.at(
+                a,
+                &mw,
+                &format!("{G}.bijdrage.toegevoegd"),
+                g,
+                onderwerp,
+                json!({
+                    "tekst": "De melding is afgehandeld. Laat het ons weten als het probleem terugkomt.",
+                    "automatisch": false
+                }),
+            );
+            s.at(
+                1,
+                &mw,
+                &format!("{G}.gesprek.afgesloten"),
+                g,
+                onderwerp,
+                json!({ "reden": "Melding afgehandeld" }),
+            );
+        }
+        if self.kans(0.08) {
+            let a = self.min(600, 4320);
+            s.at(
+                a,
+                &inwoner,
+                &format!("{M}.heropend"),
+                &zaak,
+                &nr,
                 json!({ "reden": "Het probleem is er nog steeds." }),
-            ));
-            items.push_back(ev(
-                &behandelaar,
-                "urn:sim:zaaksysteem",
-                "in_behandeling_genomen",
-                json!({ "behandelaar": behandelaar.id }),
-            ));
-            items.push_back(ev(
-                &behandelaar,
-                "urn:sim:zaaksysteem",
-                "opgelost",
-                json!({ "toelichting": "Opnieuw bekeken en nu echt opgelost." }),
-            ));
+            );
+            let a = self.min(240, 2880);
+            s.at(
+                a,
+                &mw,
+                &format!("{M}.afgehandeld"),
+                &zaak,
+                &nr,
+                json!({ "resultaat": "opgelost", "toelichting": "Opnieuw bekeken en nu echt opgelost." }),
+            );
         }
-        items.push_back(ev(
-            &self.router,
-            "urn:sim:routering",
-            "afgesloten",
-            json!({ "reden": "Automatisch afgesloten na opgelost." }),
-        ));
-        Case { items }
+        if self.kans(0.4) {
+            let score = self.pick(&[5, 5, 5, 5, 5, 4, 4, 4, 4, 3, 3, 2, 1]);
+            let opmerking = self.pick(&[
+                "Snel opgelost, dank!",
+                "Duurde wat lang.",
+                "Prima geholpen.",
+                "",
+            ]);
+            let a = self.min(60, 2880);
+            let signalen = self.signalen.clone();
+            s.at(
+                a,
+                &signalen,
+                &format!("{M}.tevredenheid_gegeven"),
+                &zaak,
+                &nr,
+                json!({ "score": score, "opmerking": opmerking }),
+            );
+        }
+        s
     }
 
-    fn vergunning(&mut self) -> Case {
-        let subject = format!("urn:uuid:{}", uuid::Uuid::now_v7());
-        let nummer = self.zaaknummer("OV");
+    fn vergunning(&mut self, start: DateTime<Utc>) -> Seq {
+        let v = &AANVRAGEN[self.rng.gen_range(0..AANVRAGEN.len())];
         let aanvrager = self.inwoner();
-        let (activiteiten, omschrijving, procedure) = *AANVRAGEN.choose(&mut self.rng).unwrap();
-        let (adres, _wijk, locatie) = self.plek();
-        let behandelaar = self.medewerker("vergunningen");
-        let today = Utc::now().date_naive();
-        let weken = if procedure == "uitgebreid" { 26 } else { 8 };
-        let beslis = today + Days::weeks(weken);
-        let v = "nl.vng.vergunningen.aanvraag";
-        let ev = |actor: &Actor, source, t: &str, data: Value| {
-            Item::Ev(Ev {
-                actor: actor.clone(),
-                source,
-                kind: format!("{v}.{t}"),
-                subject: subject.clone(),
-                label: nummer.clone(),
-                data,
-            })
-        };
-        let mut items = VecDeque::new();
-        items.push_back(ev(
-            &aanvrager,
-            "urn:sim:omgevingsloket",
-            "ingediend",
-            json!({
-                "zaaknummer": nummer, "activiteiten": activiteiten, "omschrijving": omschrijving,
-                "procedure": procedure, "locatie": locatie, "adres": adres,
-                "verzoeknummer": format!("{}", self.rng.gen_range(1_000_000..9_999_999)),
-                "aanvrager": { "partij": aanvrager.id, "rol": "aanvrager" }
-            }),
-        ));
-        items.push_back(ev(
-            &behandelaar,
-            "urn:sim:zaaksysteem",
-            "behandelaar_toegewezen",
-            json!({ "behandelaar": behandelaar.id }),
-        ));
-        if self.rng.gen_bool(0.4) {
-            let doc = *DOCUMENTEN.choose(&mut self.rng).unwrap();
-            let toelichting = format!("Wij missen nog {doc}.");
-            items.push_back(ev(
-                &behandelaar,
-                "urn:sim:zaaksysteem",
-                "aanvulling_gevraagd",
-                json!({ "toelichting": toelichting, "termijnTot": (today + Days::days(14)).to_string() }),
-            ));
-            let vraag = format!(
-                "Voor de beoordeling van uw aanvraag missen we nog {doc}. Kunt u die binnen twee weken aanleveren?"
-            );
-            items.push_back(Item::Spawn(self.gesprek(
-                &aanvrager,
-                &behandelaar,
-                false,
-                &format!("Aanvulling nodig voor {nummer}"),
-                Some(&subject),
-                &[
-                    (false, &vraag),
-                    (
-                        true,
-                        "Ik vraag het na bij mijn architect en stuur het deze week.",
-                    ),
-                    (
-                        true,
-                        "Ik heb de stukken net geüpload in het Omgevingsloket.",
-                    ),
-                    (
-                        false,
-                        "Ontvangen, dank u. We nemen de aanvraag weer in behandeling.",
-                    ),
-                ],
-                "Aanvulling ontvangen",
-            )));
-            items.push_back(ev(
-                &aanvrager,
-                "urn:sim:omgevingsloket",
-                "aanvulling_ontvangen",
-                json!({ "documenten": [doc] }),
-            ));
+        let mw = self.medewerker("vergunningen");
+        let olo = self.olo.clone();
+        let nr = self.nummer("OV", start);
+        let zaak = format!("https://zaken.demodam.nl/vergunningen/{nr}");
+        let (adres, wijk, locatie) = self.plek();
+        let mut s = Seq::new(start);
+        let mut data = json!({
+            "zaaknummer": nr,
+            "verzoeknummer": self.rng.gen_range(9_000_000..9_999_999).to_string(),
+            "activiteiten": v.activiteiten, "omschrijving": v.omschrijving,
+            "procedure": if v.uitgebreid { "uitgebreid" } else { "regulier" },
+            "locatie": locatie, "adres": adres, "wijk": wijk,
+            "kadastraal": format!("DMD00 K {}", self.rng.gen_range(1000..9999)),
+            "bijlagen": v.bijlagen,
+            "aanvrager": { "partij": aanvrager.id, "rol": "aanvrager" }
+        });
+        if v.kosten.1 > 0 {
+            data["bouwkosten"] = json!(self.rng.gen_range(v.kosten.0..v.kosten.1) / 100 * 100);
         }
-        items.push_back(ev(
-            &behandelaar,
-            "urn:sim:zaaksysteem",
-            "ontvankelijk_verklaard",
-            json!({ "uiterlijkeBeslisdatum": beslis.to_string() }),
-        ));
-        if activiteiten.contains(&"bouwen") || activiteiten.contains(&"monument") {
-            let uitkomst = *[
+        // With a gemachtigde (an architect), the architect sends the aanvulling.
+        let indiener_aanvulling = if self.kans(0.3) {
+            data["gemachtigde"] = json!(self.gemachtigde.id);
+            self.gemachtigde.clone()
+        } else {
+            aanvrager.clone()
+        };
+        s.at(0, &olo, &format!("{V}.ingediend"), &zaak, &nr, data);
+        let a = self.min(600, 4320);
+        let beslis = s.date(a, if v.uitgebreid { 26 * 7 } else { 8 * 7 });
+        s.at(
+            a,
+            &mw,
+            &format!("{V}.ontvankelijk_verklaard"),
+            &zaak,
+            &nr,
+            json!({
+                "behandelaar": mw.id, "uiterlijkeBeslisdatum": beslis,
+                "toelichting": "Aanvraag is compleet genoeg om in behandeling te nemen."
+            }),
+        );
+        if self.kans(0.45) {
+            let a = self.min(600, 2880);
+            let termijn = s.date(a, 14);
+            s.at(
+                a,
+                &mw,
+                &format!("{V}.aanvulling_gevraagd"),
+                &zaak,
+                &nr,
+                json!({
+                    "gevraagd": v.aanvulling, "termijnTot": termijn,
+                    "toelichting": "De beslistermijn is opgeschort tot de stukken binnen zijn."
+                }),
+            );
+            let g = format!("urn:uuid:{}", uuid::Uuid::now_v7());
+            let onderwerp = format!("Aanvulling nodig voor {nr}");
+            s.at(
+                5,
+                &mw,
+                &format!("{G}.gesprek.gestart"),
+                &g,
+                &onderwerp,
+                json!({
+                    "onderwerp": onderwerp, "team": "vergunningen", "aanleiding": { "zaak": zaak },
+                    "initiatiefnemer": { "partij": mw.id, "rol": "behandelaar" }
+                }),
+            );
+            s.at(
+                1,
+                &mw,
+                &format!("{G}.deelname.toegevoegd"),
+                &g,
+                &onderwerp,
+                json!({ "partij": aanvrager.id, "rol": "inwoner" }),
+            );
+            let tekst = format!(
+                "Voor uw aanvraag missen we nog: {}. U kunt dit aanleveren tot {termijn}.",
+                v.aanvulling.join(", ")
+            );
+            s.at(
+                1,
+                &mw,
+                &format!("{G}.bijdrage.toegevoegd"),
+                &g,
+                &onderwerp,
+                json!({ "tekst": tekst, "automatisch": false }),
+            );
+            let vraag = self.pick(&[
+                "Dank voor het bericht. Mijn aannemer stuurt het deze week op.",
+                "Moet dat document ook ondertekend zijn?",
+                "Ik begrijp niet goed wat u precies nodig heeft, kunt u bellen?",
+            ]);
+            let a = self.min(60, 1440);
+            s.at(
+                a,
+                &aanvrager,
+                &format!("{G}.bijdrage.toegevoegd"),
+                &g,
+                &onderwerp,
+                json!({ "tekst": vraag }),
+            );
+            let antwoord = self.pick(&[
+                "Ja, graag ondertekend door de constructeur.",
+                "Prima, u kunt het uploaden via het Omgevingsloket.",
+                "Ik bel u morgenochtend.",
+            ]);
+            let a = self.min(30, 480);
+            s.at(
+                a,
+                &mw,
+                &format!("{G}.bijdrage.toegevoegd"),
+                &g,
+                &onderwerp,
+                json!({ "tekst": antwoord, "automatisch": false }),
+            );
+            let bijlagen: Vec<String> = v
+                .aanvulling
+                .iter()
+                .map(|x| format!("{}.pdf", x.replace(' ', "-")))
+                .collect();
+            let a = self.min(1440, 7200);
+            s.at(
+                a,
+                &indiener_aanvulling,
+                &format!("{V}.aanvulling_ontvangen"),
+                &zaak,
+                &nr,
+                json!({ "bijlagen": bijlagen, "toelichting": "Zie bijlage." }),
+            );
+            let a = self.min(10, 600);
+            s.at(
+                a,
+                &mw,
+                &format!("{G}.gesprek.afgesloten"),
+                &g,
+                &onderwerp,
+                json!({ "reden": "Aanvulling ontvangen" }),
+            );
+        }
+        if self.kans(0.08) {
+            let a = self.min(1440, 10080);
+            s.at(
+                a,
+                &olo,
+                &format!("{V}.ingetrokken"),
+                &zaak,
+                &nr,
+                json!({ "reden": "Aanvrager heeft de aanvraag ingetrokken via het Omgevingsloket." }),
+            );
+            return s;
+        }
+        if v.uitgebreid || self.kans(0.6) {
+            let a = self.min(600, 2880);
+            s.at(
+                a,
+                &mw,
+                &format!("{V}.advies_gevraagd"),
+                &zaak,
+                &nr,
+                json!({ "adviseur": v.adviseur, "vraag": v.vraag }),
+            );
+            let uitkomst = self.pick(&[
+                "positief",
                 "positief",
                 "positief",
                 "positief met voorwaarden",
+                "positief met voorwaarden",
                 "negatief",
-            ]
-            .choose(&mut self.rng)
-            .unwrap();
-            items.push_back(ev(
-                &behandelaar,
-                "urn:sim:zaaksysteem",
-                "advies_ontvangen",
-                json!({ "adviseur": "Commissie ruimtelijke kwaliteit", "uitkomst": uitkomst }),
-            ));
+            ]);
+            let toelichting = match uitkomst {
+                "positief" => "Past binnen het beleid.",
+                "negatief" => "Niet passend in het straatbeeld.",
+                _ => "Akkoord, mits de kleur wordt aangepast.",
+            };
+            let a = self.min(4320, 20160);
+            s.at(
+                a,
+                &mw,
+                &format!("{V}.advies_ontvangen"),
+                &zaak,
+                &nr,
+                json!({ "adviseur": v.adviseur, "uitkomst": uitkomst, "toelichting": toelichting }),
+            );
         }
-        if self.rng.gen_bool(0.2) {
-            items.push_back(ev(
-                &behandelaar,
-                "urn:sim:zaaksysteem",
-                "termijn_verlengd",
-                json!({ "uiterlijkeBeslisdatum": (beslis + Days::weeks(6)).to_string(), "reden": "Advies nodig van een externe partij." }),
-            ));
+        if self.kans(0.15) {
+            let a = self.min(600, 2880);
+            let nieuw = s.date(a, 14 * 7);
+            s.at(
+                a,
+                &mw,
+                &format!("{V}.termijn_verlengd"),
+                &zaak,
+                &nr,
+                json!({ "uiterlijkeBeslisdatum": nieuw, "reden": "Advies van een externe partij duurt langer." }),
+            );
         }
         let uitkomst = match self.rng.gen_range(0..100) {
-            0..=59 => "verleend",
-            60..=84 => "verleend met voorschriften",
+            0..=54 => "verleend",
+            55..=84 => "verleend met voorschriften",
             85..=94 => "geweigerd",
             _ => "buiten behandeling",
         };
-        items.push_back(ev(
-            &behandelaar,
-            "urn:sim:zaaksysteem",
-            "besloten",
-            json!({ "uitkomst": uitkomst }),
-        ));
-        if uitkomst.starts_with("verleend") {
-            items.push_back(ev(
-                &behandelaar,
-                "urn:sim:zaaksysteem",
-                "bekendgemaakt",
-                json!({ "publicatie": format!("https://zoek.officielebekendmakingen.nl/gmb-{}-{}", Local::now().format("%Y"), self.rng.gen_range(100_000..999_999)) }),
-            ));
+        let a = self.min(1440, 10080);
+        let mut besluit = json!({ "uitkomst": uitkomst, "bezwaartermijnTot": s.date(a, 42) });
+        if uitkomst == "verleend met voorschriften" {
+            let all = [
+                "Start bouw melden 2 dagen vooraf",
+                "Herplantplicht binnen 12 maanden",
+                "Kleur kozijnen RAL 9001",
+                "Geen werkzaamheden in het broedseizoen",
+            ];
+            let gekozen: Vec<&str> = all.choose_multiple(&mut self.rng, 2).copied().collect();
+            besluit["voorschriften"] = json!(gekozen);
         }
-        Case { items }
+        s.at(a, &mw, &format!("{V}.besloten"), &zaak, &nr, besluit);
+        if uitkomst.starts_with("verleend") {
+            let publicatie = format!(
+                "https://zoek.officielebekendmakingen.nl/gmb-{}-{}",
+                start.format("%Y"),
+                self.rng.gen_range(100_000..999_999)
+            );
+            let a = self.min(60, 2880);
+            s.at(
+                a,
+                &mw,
+                &format!("{V}.bekendgemaakt"),
+                &zaak,
+                &nr,
+                json!({ "publicatie": publicatie }),
+            );
+        }
+        s
     }
 
-    fn wmo_gesprek(&mut self) -> Case {
+    fn wmo_gesprek(&mut self, start: DateTime<Utc>) -> Seq {
         let inwoner = self.inwoner();
         let mw = self.medewerker("wmo");
-        let (onderwerp, vraag, antwoord) = *WMO.choose(&mut self.rng).unwrap();
-        self.gesprek(
+        let (onderwerp, vraag, antwoord) = self.pick(WMO);
+        let g = format!("urn:uuid:{}", uuid::Uuid::now_v7());
+        let mut s = Seq::new(start);
+        s.at(
+            0,
             &inwoner,
-            &mw,
-            true,
+            &format!("{G}.gesprek.gestart"),
+            &g,
             onderwerp,
-            None,
-            &[(true, vraag), (false, antwoord), (true, "Dank u wel.")],
-            "Vraag beantwoord",
-        )
-    }
-
-    /// A gesprek between an inwoner and a medewerker. The medewerker adds the other
-    /// party (write right via the team), then they take turns; the medewerker closes it.
-    #[allow(clippy::too_many_arguments)]
-    fn gesprek(
-        &mut self,
-        inwoner: &Actor,
-        medewerker: &Actor,
-        door_inwoner: bool,
-        onderwerp: &str,
-        zaak: Option<&str>,
-        script: &[(bool, &str)],
-        reden: &str,
-    ) -> Case {
-        let subject = format!("urn:uuid:{}", uuid::Uuid::now_v7());
-        let label = onderwerp.to_string();
-        let g = "nl.vng.gesprekken";
-        let ev = |actor: &Actor, t: &str, data: Value| {
-            Item::Ev(Ev {
-                actor: actor.clone(),
-                source: "urn:sim:mijngesprekken",
-                kind: format!("{g}.{t}"),
-                subject: subject.clone(),
-                label: label.clone(),
-                data,
-            })
-        };
-        let team = medewerker.team();
-        let mut items = VecDeque::new();
-        let mut gestart = json!({ "onderwerp": onderwerp, "team": team });
-        if let Some(z) = zaak {
-            gestart["aanleiding"] = json!({ "zaak": z });
-        }
-        let mut script: VecDeque<(bool, &str)> = script.iter().copied().collect();
-        if door_inwoner {
-            gestart["initiatiefnemer"] = json!({ "partij": inwoner.id, "rol": "inwoner" });
-            items.push_back(ev(inwoner, "gesprek.gestart", gestart));
-            if let Some((true, t)) = script.front().copied() {
-                items.push_back(ev(inwoner, "bijdrage.toegevoegd", json!({ "tekst": t })));
-                script.pop_front();
-            }
-            items.push_back(ev(
-                medewerker,
-                "deelname.toegevoegd",
-                json!({ "partij": medewerker.id, "rol": "behandelaar" }),
-            ));
-        } else {
-            gestart["initiatiefnemer"] = json!({ "partij": medewerker.id, "rol": "behandelaar" });
-            items.push_back(ev(medewerker, "gesprek.gestart", gestart));
-            items.push_back(ev(
-                medewerker,
-                "deelname.toegevoegd",
-                json!({ "partij": inwoner.id, "rol": "inwoner" }),
-            ));
-        }
-        for (van_inwoner, tekst) in script {
-            let a = if van_inwoner { inwoner } else { medewerker };
-            items.push_back(ev(
-                a,
-                "bijdrage.toegevoegd",
-                json!({ "tekst": tekst, "automatisch": false }),
-            ));
-        }
-        items.push_back(ev(
-            medewerker,
-            "gesprek.afgesloten",
-            json!({ "reden": reden }),
-        ));
-        Case { items }
+            json!({
+                "onderwerp": onderwerp, "team": "wmo",
+                "initiatiefnemer": { "partij": inwoner.id, "rol": "inwoner" }
+            }),
+        );
+        s.at(
+            1,
+            &inwoner,
+            &format!("{G}.bijdrage.toegevoegd"),
+            &g,
+            onderwerp,
+            json!({ "tekst": vraag }),
+        );
+        let a = self.min(30, 600);
+        s.at(
+            a,
+            &mw,
+            &format!("{G}.deelname.toegevoegd"),
+            &g,
+            onderwerp,
+            json!({ "partij": mw.id, "rol": "behandelaar" }),
+        );
+        s.at(
+            2,
+            &mw,
+            &format!("{G}.bijdrage.toegevoegd"),
+            &g,
+            onderwerp,
+            json!({ "tekst": antwoord, "automatisch": false }),
+        );
+        let a = self.min(10, 600);
+        s.at(
+            a,
+            &inwoner,
+            &format!("{G}.bijdrage.toegevoegd"),
+            &g,
+            onderwerp,
+            json!({ "tekst": "Dank u wel." }),
+        );
+        let a = self.min(10, 1440);
+        s.at(
+            a,
+            &mw,
+            &format!("{G}.gesprek.afgesloten"),
+            &g,
+            onderwerp,
+            json!({ "reden": "Vraag beantwoord" }),
+        );
+        s
     }
 }
 
-fn post(agent: &ureq::Agent, base: &str, e: &Ev) -> Result<(), String> {
+// ---------- history ----------
+
+/// `n` zaken started at random moments in the last `days` days. Steps that would lie in
+/// the future are left out, so recent zaken stay open. Returns the events in time order.
+fn backfill(w: &mut World, n: usize, days: i64) -> Vec<(DateTime<Utc>, Ev)> {
+    let now = Utc::now();
+    let mut out = Vec::new();
+    for _ in 0..n {
+        let start = now - Mins::minutes(w.rng.gen_range(60..days.max(1) * 24 * 60));
+        let mut t = start;
+        for e in w.scenario(start).steps {
+            t += Mins::minutes(e.after);
+            if t > now {
+                break;
+            }
+            out.push((t, e));
+        }
+    }
+    out.sort_by_key(|(t, _)| *t);
+    out
+}
+
+// ---------- HTTP ----------
+
+fn post(agent: &ureq::Agent, base: &str, e: &Ev, time: DateTime<Utc>) -> Result<(), String> {
     let body = json!({
         "specversion": "1.0",
         "id": uuid::Uuid::now_v7().to_string(),
-        "source": e.source,
+        "source": e.actor.source,
         "type": e.kind,
         "subject": e.subject,
-        "time": Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        "time": time.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
         "datacontenttype": "application/json",
         "data": e.data,
     });
@@ -676,6 +1089,20 @@ fn post(agent: &ureq::Agent, base: &str, e: &Ev) -> Result<(), String> {
     }
 }
 
+fn print(e: &Ev, t: DateTime<Utc>) {
+    let short = e
+        .kind
+        .trim_start_matches("nl.vng.")
+        .replacen("gesprekken.", "gesprek:", 1);
+    println!(
+        "{}  {:<16} {:<44} {}",
+        t.with_timezone(&Local).format("%d-%m %H:%M:%S"),
+        e.actor.slug,
+        short,
+        e.label
+    );
+}
+
 fn arg<T: std::str::FromStr>(args: &[String], name: &str, default: T) -> T {
     args.iter()
         .position(|a| a == name)
@@ -684,42 +1111,51 @@ fn arg<T: std::str::FromStr>(args: &[String], name: &str, default: T) -> T {
         .unwrap_or(default)
 }
 
+const HELP: &str = "openevents-sim [--base URL] [--backfill N] [--days N] [--rate EVENTS_PER_SEC]
+               [--count N] [--active N] [--seed N]
+
+Sends semi-realistic events (meldingen openbare ruimte, aanvragen omgevingsvergunning
+and the gesprekken that go with them) to an OpenEvents in dev mode with the example
+profiles installed.
+
+  --base      default http://127.0.0.1:8080
+  --backfill  first write N zaken as history, with event times in the past (default 0)
+  --days      how far back the history goes (default 30)
+  --rate      live events per second (default 0.5; 0 = as fast as possible)
+  --count     stop after N live events (default: never; 0 = only the history)
+  --active    zaken running live at the same time (default 6)
+  --seed      random seed (default: time based)";
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "-h" || a == "--help") {
-        println!(
-            "openevents-sim [--base URL] [--rate EVENTS_PER_SEC] [--count N] [--active N] [--seed N]\n\n\
-             Sends semi-realistic events (meldingen, vergunningaanvragen, gesprekken) to an\n\
-             OpenEvents in dev mode with the example profiles installed.\n\n\
-             --base    default http://127.0.0.1:8080\n\
-             --rate    events per second, default 1 (0 = as fast as possible)\n\
-             --count   stop after N events, default endless\n\
-             --active  cases running at the same time, default 8\n\
-             --seed    random seed, default: time based"
-        );
+        println!("{HELP}");
         return;
     }
     let base: String = arg(&args, "--base", "http://127.0.0.1:8080".to_string());
     let base = base.trim_end_matches('/').to_string();
-    let rate: f64 = arg(&args, "--rate", 1.0);
+    let rate: f64 = arg(&args, "--rate", 0.5);
     let count: u64 = arg(&args, "--count", u64::MAX);
-    let active: usize = arg(&args, "--active", 8).max(1);
+    let active: usize = arg(&args, "--active", 6).max(1);
     let seed: u64 = arg(&args, "--seed", Utc::now().timestamp_millis() as u64);
+    let backfill_n: usize = arg(&args, "--backfill", 0);
+    let days: i64 = arg(&args, "--days", 30);
 
     let agent = ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(10))
         .build();
     match agent.get(&format!("{base}/profiles")).call() {
         Ok(r) => {
-            let body: Value = r.into_json().unwrap_or(Value::Null);
-            let text = body.to_string();
+            let text = r.into_string().unwrap_or_default();
             for p in [
                 "nl.vng.meldingen",
                 "nl.vng.vergunningen",
                 "nl.vng.gesprekken",
             ] {
                 if !text.contains(&format!("\"{p}\"")) {
-                    eprintln!("Profiel {p} ontbreekt. Start de server met OPENEVENTS_PROFILES=examples/profiles.");
+                    eprintln!(
+                        "Profiel {p} ontbreekt. Start de server met OPENEVENTS_PROFILES=examples/profiles."
+                    );
                     std::process::exit(1);
                 }
             }
@@ -729,46 +1165,55 @@ fn main() {
             std::process::exit(1);
         }
     }
-    eprintln!("openevents-sim: {base}, {rate} events/s, seed {seed}");
 
     let mut w = World::new(seed);
-    let mut cases: Vec<Case> = Vec::new();
-    let mut sent = 0u64;
     let mut failed = 0u64;
-    while sent < count {
-        // Keep about `active` zaken running; spawned gesprekken come on top.
-        if cases.len() < active && (cases.is_empty() || w.rng.gen_bool(0.35)) {
-            cases.push(w.new_case());
-        }
-        let i = w.rng.gen_range(0..cases.len());
-        let mut ev = None;
-        while let Some(item) = cases[i].items.pop_front() {
-            match item {
-                Item::Spawn(c) => cases.push(c),
-                Item::Ev(e) => {
-                    ev = Some(e);
-                    break;
+    if backfill_n > 0 {
+        let history = backfill(&mut w, backfill_n, days);
+        eprintln!(
+            "historie: {backfill_n} zaken, {} events over {days} dagen",
+            history.len()
+        );
+        let mut ok = 0;
+        for (t, e) in &history {
+            match post(&agent, &base, e, *t) {
+                Ok(()) => {
+                    ok += 1;
+                    print(e, *t);
+                }
+                Err(msg) => {
+                    failed += 1;
+                    eprintln!("FOUT {} ({}): {msg}", e.kind, e.label);
                 }
             }
         }
-        let Some(e) = ev else {
+        eprintln!("historie klaar: {ok}/{} geschreven", history.len());
+    }
+
+    if count == 0 {
+        return;
+    }
+    eprintln!("live: {rate} events/s, {active} zaken tegelijk, seed {seed} (Ctrl+C stopt)");
+    let mut cases: Vec<Seq> = Vec::new();
+    let mut sent = 0u64;
+    while sent < count {
+        while cases.len() < active {
+            cases.push(w.scenario(Utc::now()));
+        }
+        let i = w.rng.gen_range(0..cases.len());
+        let Some(e) = cases[i].steps.pop_front() else {
             cases.swap_remove(i);
             continue;
         };
-        match post(&agent, &base, &e) {
+        let now = Utc::now();
+        match post(&agent, &base, &e, now) {
             Ok(()) => {
                 sent += 1;
-                println!(
-                    "{} {:<52} {:<34} {}",
-                    Local::now().format("%H:%M:%S"),
-                    e.kind,
-                    e.label.chars().take(34).collect::<String>(),
-                    naam(&e.actor)
-                );
+                print(&e, now);
             }
             Err(msg) => {
-                // The rest of this case depends on this event: drop it.
-                cases[i].items.clear();
+                // The rest of this zaak depends on this event: drop it.
+                cases[i].steps.clear();
                 failed += 1;
                 eprintln!("FOUT {} ({}): {msg}", e.kind, e.label);
                 if failed > 20 && failed > sent {
@@ -777,7 +1222,7 @@ fn main() {
                 }
             }
         }
-        if cases[i].items.is_empty() {
+        if cases[i].steps.is_empty() {
             cases.swap_remove(i);
         }
         if rate > 0.0 {
@@ -785,5 +1230,5 @@ fn main() {
             std::thread::sleep(Duration::from_secs_f64(pause));
         }
     }
-    eprintln!("klaar: {sent} events, {failed} fouten");
+    eprintln!("klaar: {sent} live events, {failed} fouten");
 }

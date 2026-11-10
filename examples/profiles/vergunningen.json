@@ -1,21 +1,28 @@
 {
   "id": "nl.vng.vergunningen",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "title": "Aanvragen omgevingsvergunning (simulatievoorbeeld)",
   "personas": [
     {
-      "id": "https://id.example.nl/pieter",
-      "label": "Pieter (aanvrager)",
+      "id": "https://id.example.nl/jan",
+      "label": "Jan (inwoner, aanvrager)",
       "claims": {
         "rol": "inwoner"
       }
     },
     {
-      "id": "https://id.example.nl/fatima",
-      "label": "Fatima (vergunningverlener)",
+      "id": "https://id.example.nl/femke",
+      "label": "Femke (vergunningverlener)",
       "claims": {
         "rol": "medewerker",
         "team": "vergunningen"
+      }
+    },
+    {
+      "id": "https://id.example.nl/omgevingsloket",
+      "label": "Omgevingsloket (DSO)",
+      "claims": {
+        "rol": "systeem"
       }
     }
   ],
@@ -29,6 +36,7 @@
         "procedure",
         "team",
         "behandelaar",
+        "wijk",
         "aanvrager.partij",
         "uiterlijkeBeslisdatum",
         "besluit.uitkomst",
@@ -46,16 +54,13 @@
           "zaaknummer": {
             "type": "string"
           },
+          "verzoeknummer": {
+            "type": "string"
+          },
           "activiteiten": {
             "type": "array",
             "items": {
-              "enum": [
-                "bouwen",
-                "kappen",
-                "uitrit",
-                "monument",
-                "gebruik"
-              ]
+              "type": "string"
             }
           },
           "omschrijving": {
@@ -66,7 +71,8 @@
               "ingediend",
               "in behandeling",
               "aanvulling gevraagd",
-              "besloten"
+              "besloten",
+              "ingetrokken"
             ]
           },
           "procedure": {
@@ -98,6 +104,12 @@
           "adres": {
             "type": "string"
           },
+          "wijk": {
+            "type": "string"
+          },
+          "kadastraal": {
+            "type": "string"
+          },
           "aanvrager": {
             "type": "object",
             "required": [
@@ -113,6 +125,18 @@
               }
             }
           },
+          "gemachtigde": {
+            "type": "string"
+          },
+          "bouwkosten": {
+            "type": "integer"
+          },
+          "bijlagen": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "team": {
             "type": "string"
           },
@@ -122,10 +146,10 @@
         }
       },
       "rules": {
-        "read": "aanvrager.partij = actor() OR team = actor('team') OR actor('rol') = 'kcc' OR bekendgemaakt = true",
-        "create": "aanvrager.partij = actor()",
-        "append": "aanvrager.partij = actor() AND status = 'aanvulling gevraagd'",
-        "write": "team = actor('team')",
+        "read": "aanvrager.partij = actor() OR gemachtigde = actor() OR team = actor('team') OR actor('rol') IN ('kcc', 'systeem') OR bekendgemaakt = true",
+        "create": "aanvrager.partij = actor() OR actor('rol') = 'systeem'",
+        "append": "(aanvrager.partij = actor() OR gemachtigde = actor()) AND status = 'aanvulling gevraagd'",
+        "write": "team = actor('team') OR actor('rol') = 'systeem'",
         "fields": [
           {
             "when": "actor('rol') = 'kcc'",
@@ -134,13 +158,14 @@
               "activiteiten",
               "status",
               "procedure",
+              "wijk",
               "ingediend",
               "uiterlijkeBeslisdatum",
               "besluit"
             ]
           },
           {
-            "when": "aanvrager.partij <> actor() AND bekendgemaakt = true",
+            "when": "actor('rol') = 'inwoner' AND aanvrager.partij <> actor()",
             "show": [
               "zaaknummer",
               "activiteiten",
@@ -171,17 +196,14 @@
           "zaaknummer": {
             "type": "string"
           },
+          "verzoeknummer": {
+            "type": "string"
+          },
           "activiteiten": {
             "type": "array",
             "minItems": 1,
             "items": {
-              "enum": [
-                "bouwen",
-                "kappen",
-                "uitrit",
-                "monument",
-                "gebruik"
-              ]
+              "type": "string"
             }
           },
           "omschrijving": {
@@ -217,6 +239,12 @@
           "adres": {
             "type": "string"
           },
+          "wijk": {
+            "type": "string"
+          },
+          "kadastraal": {
+            "type": "string"
+          },
           "aanvrager": {
             "type": "object",
             "required": [
@@ -232,8 +260,17 @@
               }
             }
           },
-          "verzoeknummer": {
+          "gemachtigde": {
             "type": "string"
+          },
+          "bouwkosten": {
+            "type": "integer"
+          },
+          "bijlagen": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -242,6 +279,11 @@
           "op": "set",
           "path": "zaaknummer",
           "value": "$data.zaaknummer"
+        },
+        {
+          "op": "set",
+          "path": "verzoeknummer",
+          "value": "$data.verzoeknummer"
         },
         {
           "op": "set",
@@ -270,13 +312,33 @@
         },
         {
           "op": "set",
+          "path": "wijk",
+          "value": "$data.wijk"
+        },
+        {
+          "op": "set",
+          "path": "kadastraal",
+          "value": "$data.kadastraal"
+        },
+        {
+          "op": "set",
           "path": "aanvrager",
           "value": "$data.aanvrager"
         },
         {
           "op": "set",
-          "path": "verzoeknummer",
-          "value": "$data.verzoeknummer"
+          "path": "gemachtigde",
+          "value": "$data.gemachtigde"
+        },
+        {
+          "op": "set",
+          "path": "bouwkosten",
+          "value": "$data.bouwkosten"
+        },
+        {
+          "op": "set",
+          "path": "bijlagen",
+          "value": "$data.bijlagen"
         },
         {
           "op": "set",
@@ -295,16 +357,24 @@
         }
       ]
     },
-    "nl.vng.vergunningen.aanvraag.behandelaar_toegewezen": {
+    "nl.vng.vergunningen.aanvraag.ontvankelijk_verklaard": {
       "subjectType": "nl.vng.vergunningen.aanvraag",
       "right": "write",
       "dataschema": {
         "type": "object",
         "required": [
-          "behandelaar"
+          "behandelaar",
+          "uiterlijkeBeslisdatum"
         ],
         "properties": {
           "behandelaar": {
+            "type": "string"
+          },
+          "uiterlijkeBeslisdatum": {
+            "type": "string",
+            "format": "date"
+          },
+          "toelichting": {
             "type": "string"
           }
         }
@@ -317,31 +387,13 @@
         },
         {
           "op": "set",
-          "path": "status",
-          "value": "in behandeling"
-        }
-      ]
-    },
-    "nl.vng.vergunningen.aanvraag.ontvankelijk_verklaard": {
-      "subjectType": "nl.vng.vergunningen.aanvraag",
-      "right": "write",
-      "dataschema": {
-        "type": "object",
-        "required": [
-          "uiterlijkeBeslisdatum"
-        ],
-        "properties": {
-          "uiterlijkeBeslisdatum": {
-            "type": "string",
-            "format": "date"
-          }
-        }
-      },
-      "projection": [
-        {
-          "op": "set",
           "path": "uiterlijkeBeslisdatum",
           "value": "$data.uiterlijkeBeslisdatum"
+        },
+        {
+          "op": "set",
+          "path": "status",
+          "value": "in behandeling"
         },
         {
           "op": "set",
@@ -356,16 +408,22 @@
       "dataschema": {
         "type": "object",
         "required": [
-          "toelichting"
+          "gevraagd"
         ],
         "properties": {
-          "toelichting": {
-            "type": "string",
-            "minLength": 1
+          "gevraagd": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
           },
           "termijnTot": {
             "type": "string",
             "format": "date"
+          },
+          "toelichting": {
+            "type": "string"
           }
         }
       },
@@ -379,9 +437,9 @@
           "op": "append",
           "path": "aanvullingen",
           "value": {
-            "gevraagd": "$time",
-            "toelichting": "$data.toelichting",
-            "termijnTot": "$data.termijnTot"
+            "gevraagd": "$data.gevraagd",
+            "termijnTot": "$data.termijnTot",
+            "tijd": "$time"
           }
         }
       ]
@@ -393,11 +451,14 @@
         "type": "object",
         "required": [],
         "properties": {
-          "documenten": {
+          "bijlagen": {
             "type": "array",
             "items": {
               "type": "string"
             }
+          },
+          "toelichting": {
+            "type": "string"
           }
         }
       },
@@ -412,7 +473,36 @@
           "path": "ontvangenAanvullingen",
           "value": {
             "tijd": "$time",
-            "documenten": "$data.documenten"
+            "bijlagen": "$data.bijlagen"
+          }
+        }
+      ]
+    },
+    "nl.vng.vergunningen.aanvraag.advies_gevraagd": {
+      "subjectType": "nl.vng.vergunningen.aanvraag",
+      "right": "write",
+      "dataschema": {
+        "type": "object",
+        "required": [
+          "adviseur"
+        ],
+        "properties": {
+          "adviseur": {
+            "type": "string"
+          },
+          "vraag": {
+            "type": "string"
+          }
+        }
+      },
+      "projection": [
+        {
+          "op": "append",
+          "path": "adviesvragen",
+          "value": {
+            "adviseur": "$data.adviseur",
+            "vraag": "$data.vraag",
+            "tijd": "$time"
           }
         }
       ]
@@ -436,6 +526,9 @@
               "positief met voorwaarden",
               "negatief"
             ]
+          },
+          "toelichting": {
+            "type": "string"
           }
         }
       },
@@ -446,6 +539,7 @@
           "value": {
             "adviseur": "$data.adviseur",
             "uitkomst": "$data.uitkomst",
+            "toelichting": "$data.toelichting",
             "tijd": "$time"
           }
         }
@@ -499,6 +593,16 @@
               "buiten behandeling"
             ]
           },
+          "voorschriften": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "bezwaartermijnTot": {
+            "type": "string",
+            "format": "date"
+          },
           "toelichting": {
             "type": "string"
           }
@@ -515,7 +619,8 @@
           "path": "besluit",
           "value": {
             "uitkomst": "$data.uitkomst",
-            "toelichting": "$data.toelichting",
+            "voorschriften": "$data.voorschriften",
+            "bezwaartermijnTot": "$data.bezwaartermijnTot",
             "datum": "$time"
           }
         }
@@ -545,6 +650,34 @@
           "value": {
             "publicatie": "$data.publicatie",
             "tijd": "$time"
+          }
+        }
+      ]
+    },
+    "nl.vng.vergunningen.aanvraag.ingetrokken": {
+      "subjectType": "nl.vng.vergunningen.aanvraag",
+      "right": "write",
+      "dataschema": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "reden": {
+            "type": "string"
+          }
+        }
+      },
+      "projection": [
+        {
+          "op": "set",
+          "path": "status",
+          "value": "ingetrokken"
+        },
+        {
+          "op": "set",
+          "path": "ingetrokken",
+          "value": {
+            "tijd": "$time",
+            "reden": "$data.reden"
           }
         }
       ]

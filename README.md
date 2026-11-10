@@ -59,13 +59,13 @@ cargo test
 
 Open daarna http://localhost:8080/ui voor de beheer-UI: stand (materialized state), events (live), queries en schrijven. Met `OPENEVENTS_DEV_AUTH=true` kies je rechtsboven een persona uit de profielen ("Bekijk als", bijvoorbeeld inwoner of KCC-medewerker) en zie je wat die persoon mag zien; het paneel "Wat ziet wie?" vergelijkt alle persona's voor één subject. Zonder dev-modus plak je een token. Demodata laden: `examples/seed.sh` (tegen `http://localhost:8080`, of geef een andere basis-URL mee).
 
-Een doorlopende stroom semi-realistische events (meldingen openbare ruimte, aanvragen omgevingsvergunning en de gesprekken daarbij, met `aanleiding.zaak` als koppeling):
+Een stroom semi-realistische zaakevents: meldingen openbare ruimte (binnen via Signalen of het KCC), aanvragen omgevingsvergunning (via het Omgevingsloket) en de gesprekken daarbij, gekoppeld met `aanleiding.zaak`. Eerst 30 dagen historie, daarna live:
 
 ```sh
-cargo run -p openevents-sim -- --base http://localhost:8080 --rate 1
+cargo run -p openevents-sim -- --base http://localhost:8080 --backfill 40 --rate 0.5
 ```
 
-Opties: `--rate` (events per seconde, 0 is zo snel mogelijk), `--count`, `--active` (zaken tegelijk) en `--seed`. Elke actor post met zijn eigen dev-token, dus de regels van de profielen gelden net als voor echte clients. Kies in de UI bijvoorbeeld Daan (team buitenruimte), Fatima (vergunningen), Karel (inwoner, ziet meldingen van anderen zonder melder) of Kim (KCC).
+Opties: `--backfill N` (zaken als historie, met tijden in het verleden; recente zaken blijven open), `--days`, `--rate` (live events per seconde, 0 is zo snel mogelijk), `--count` (0 is alleen historie), `--active` (zaken tegelijk) en `--seed`. Elke actor post met zijn eigen dev-token, dus de regels van de profielen gelden net als voor echte clients. Kies in de UI bijvoorbeeld Ahmed (team buitenruimte), Femke (vergunningen), Priya of Jan (inwoners), Karel (ziet meldingen van anderen zonder melder) of Kim (KCC, beperkte velden).
 
 Of met Docker:
 

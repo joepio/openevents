@@ -870,7 +870,7 @@ async fn filters_only_see_shown_fields() {
             "nl.vng.meldingen.melding.gedaan",
             "urn:uuid:melding-1",
             json!({
-                "zaaknummer": "MOR-1", "categorie": "afval", "omschrijving": "Volle container",
+                "zaaknummer": "MOR-1", "categorie": "Afval", "omschrijving": "Volle container", "team": "afval",
                 "locatie": { "type": "Point", "coordinates": [5.12, 52.09] },
                 "melder": { "partij": SUZANNE_ID, "rol": "inwoner" }
             }),
@@ -885,7 +885,7 @@ async fn filters_only_see_shown_fields() {
         "POST",
         "/query",
         Some(karel),
-        Some(q("categorie = 'afval'")),
+        Some(q("categorie = 'Afval'")),
     )
     .await;
     assert_eq!(b["results"].as_array().unwrap().len(), 1);

@@ -1,11 +1,11 @@
 {
   "id": "nl.vng.meldingen",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "title": "Meldingen openbare ruimte (simulatievoorbeeld)",
   "personas": [
     {
-      "id": "https://id.example.nl/suzanne",
-      "label": "Suzanne (inwoner)",
+      "id": "https://id.example.nl/priya",
+      "label": "Priya (inwoner, melder)",
       "claims": {
         "rol": "inwoner"
       }
@@ -18,8 +18,8 @@
       }
     },
     {
-      "id": "https://id.example.nl/daan",
-      "label": "Daan (team buitenruimte)",
+      "id": "https://id.example.nl/ahmed",
+      "label": "Ahmed (team buitenruimte)",
       "claims": {
         "rol": "medewerker",
         "team": "buitenruimte"
@@ -31,6 +31,13 @@
       "claims": {
         "rol": "kcc"
       }
+    },
+    {
+      "id": "https://id.example.nl/signalen",
+      "label": "Signalen (meldingen-API)",
+      "claims": {
+        "rol": "systeem"
+      }
     }
   ],
   "types": {
@@ -39,10 +46,13 @@
       "queryable": [
         "status",
         "categorie",
+        "subcategorie",
         "team",
         "wijk",
         "zaaknummer",
         "kanaal",
+        "prioriteit",
+        "behandelaar",
         "melder.partij",
         "gemeld"
       ],
@@ -53,22 +63,18 @@
           "categorie",
           "omschrijving",
           "status",
-          "locatie"
+          "locatie",
+          "team"
         ],
         "properties": {
           "zaaknummer": {
             "type": "string"
           },
           "categorie": {
-            "enum": [
-              "afval",
-              "verlichting",
-              "wegdek",
-              "groen",
-              "overlast",
-              "fietswrak",
-              "graffiti"
-            ]
+            "type": "string"
+          },
+          "subcategorie": {
+            "type": "string"
           },
           "omschrijving": {
             "type": "string"
@@ -76,11 +82,17 @@
           "status": {
             "enum": [
               "gemeld",
-              "toegewezen",
               "in behandeling",
-              "opgelost",
-              "heropend",
-              "afgesloten"
+              "ingepland",
+              "afgehandeld",
+              "heropend"
+            ]
+          },
+          "prioriteit": {
+            "enum": [
+              "laag",
+              "normaal",
+              "hoog"
             ]
           },
           "locatie": {
@@ -112,11 +124,15 @@
           "team": {
             "type": "string"
           },
+          "behandelaar": {
+            "type": "string"
+          },
           "kanaal": {
             "enum": [
               "app",
               "website",
-              "telefoon"
+              "telefoon",
+              "e-mail"
             ]
           },
           "melder": {
@@ -133,25 +149,46 @@
                 "type": "string"
               }
             }
+          },
+          "fotos": {
+            "type": "integer"
           }
         }
       },
       "rules": {
-        "read": "melder.partij = actor() OR team = actor('team') OR actor('rol') IN ('kcc', 'regie', 'inwoner')",
-        "create": "melder.partij = actor() OR actor('rol') = 'kcc'",
+        "read": "melder.partij = actor() OR team = actor('team') OR actor('rol') IN ('kcc', 'systeem', 'inwoner')",
+        "create": "melder.partij = actor() OR actor('rol') IN ('kcc', 'systeem')",
         "append": "melder.partij = actor()",
-        "write": "team = actor('team') OR actor('rol') = 'regie'",
+        "write": "team = actor('team') OR actor('rol') = 'systeem'",
         "fields": [
+          {
+            "when": "actor('rol') = 'kcc'",
+            "show": [
+              "zaaknummer",
+              "categorie",
+              "subcategorie",
+              "status",
+              "prioriteit",
+              "locatie",
+              "adres",
+              "wijk",
+              "team",
+              "gemeld",
+              "ingepland",
+              "afgehandeld"
+            ]
+          },
           {
             "when": "actor('rol') = 'inwoner' AND melder.partij <> actor()",
             "show": [
               "zaaknummer",
               "categorie",
+              "subcategorie",
               "status",
               "locatie",
               "wijk",
               "gemeld",
-              "opgelost.tijd"
+              "afgehandeld.tijd"
             ]
           }
         ]
@@ -168,22 +205,18 @@
           "zaaknummer",
           "categorie",
           "omschrijving",
-          "locatie"
+          "locatie",
+          "team"
         ],
         "properties": {
           "zaaknummer": {
             "type": "string"
           },
           "categorie": {
-            "enum": [
-              "afval",
-              "verlichting",
-              "wegdek",
-              "groen",
-              "overlast",
-              "fietswrak",
-              "graffiti"
-            ]
+            "type": "string"
+          },
+          "subcategorie": {
+            "type": "string"
           },
           "omschrijving": {
             "type": "string",
@@ -219,7 +252,8 @@
             "enum": [
               "app",
               "website",
-              "telefoon"
+              "telefoon",
+              "e-mail"
             ]
           },
           "melder": {
@@ -236,6 +270,19 @@
                 "type": "string"
               }
             }
+          },
+          "team": {
+            "type": "string"
+          },
+          "prioriteit": {
+            "enum": [
+              "laag",
+              "normaal",
+              "hoog"
+            ]
+          },
+          "fotos": {
+            "type": "integer"
           }
         }
       },
@@ -249,6 +296,11 @@
           "op": "set",
           "path": "categorie",
           "value": "$data.categorie"
+        },
+        {
+          "op": "set",
+          "path": "subcategorie",
+          "value": "$data.subcategorie"
         },
         {
           "op": "set",
@@ -282,6 +334,21 @@
         },
         {
           "op": "set",
+          "path": "team",
+          "value": "$data.team"
+        },
+        {
+          "op": "set",
+          "path": "prioriteit",
+          "value": "$data.prioriteit"
+        },
+        {
+          "op": "set",
+          "path": "fotos",
+          "value": "$data.fotos"
+        },
+        {
+          "op": "set",
           "path": "status",
           "value": "gemeld"
         },
@@ -298,33 +365,8 @@
       "dataschema": {
         "type": "object",
         "required": [
-          "team"
+          "behandelaar"
         ],
-        "properties": {
-          "team": {
-            "type": "string"
-          }
-        }
-      },
-      "projection": [
-        {
-          "op": "set",
-          "path": "team",
-          "value": "$data.team"
-        },
-        {
-          "op": "set",
-          "path": "status",
-          "value": "toegewezen"
-        }
-      ]
-    },
-    "nl.vng.meldingen.melding.in_behandeling_genomen": {
-      "subjectType": "nl.vng.meldingen.melding",
-      "right": "write",
-      "dataschema": {
-        "type": "object",
-        "required": [],
         "properties": {
           "behandelaar": {
             "type": "string"
@@ -344,13 +386,22 @@
         }
       ]
     },
-    "nl.vng.meldingen.melding.opgelost": {
+    "nl.vng.meldingen.melding.ingepland": {
       "subjectType": "nl.vng.meldingen.melding",
       "right": "write",
       "dataschema": {
         "type": "object",
-        "required": [],
+        "required": [
+          "datum"
+        ],
         "properties": {
+          "datum": {
+            "type": "string",
+            "format": "date"
+          },
+          "uitvoerder": {
+            "type": "string"
+          },
           "toelichting": {
             "type": "string"
           }
@@ -360,14 +411,83 @@
         {
           "op": "set",
           "path": "status",
-          "value": "opgelost"
+          "value": "ingepland"
         },
         {
           "op": "set",
-          "path": "opgelost",
+          "path": "ingepland",
+          "value": {
+            "datum": "$data.datum",
+            "uitvoerder": "$data.uitvoerder"
+          }
+        }
+      ]
+    },
+    "nl.vng.meldingen.melding.aangevuld": {
+      "subjectType": "nl.vng.meldingen.melding",
+      "right": "append",
+      "dataschema": {
+        "type": "object",
+        "required": [
+          "tekst"
+        ],
+        "properties": {
+          "tekst": {
+            "type": "string",
+            "minLength": 1
+          },
+          "fotos": {
+            "type": "integer"
+          }
+        }
+      },
+      "projection": [
+        {
+          "op": "append",
+          "path": "aanvullingen",
+          "value": {
+            "tekst": "$data.tekst",
+            "fotos": "$data.fotos",
+            "tijd": "$time"
+          }
+        }
+      ]
+    },
+    "nl.vng.meldingen.melding.afgehandeld": {
+      "subjectType": "nl.vng.meldingen.melding",
+      "right": "write",
+      "dataschema": {
+        "type": "object",
+        "required": [
+          "resultaat"
+        ],
+        "properties": {
+          "resultaat": {
+            "enum": [
+              "opgelost",
+              "doorgezet naar derde",
+              "dubbele melding",
+              "niet gevonden"
+            ]
+          },
+          "toelichting": {
+            "type": "string"
+          }
+        }
+      },
+      "projection": [
+        {
+          "op": "set",
+          "path": "status",
+          "value": "afgehandeld"
+        },
+        {
+          "op": "set",
+          "path": "afgehandeld",
           "value": {
             "door": "$actor",
             "tijd": "$time",
+            "resultaat": "$data.resultaat",
             "toelichting": "$data.toelichting"
           }
         }
@@ -400,14 +520,21 @@
         }
       ]
     },
-    "nl.vng.meldingen.melding.afgesloten": {
+    "nl.vng.meldingen.melding.tevredenheid_gegeven": {
       "subjectType": "nl.vng.meldingen.melding",
       "right": "write",
       "dataschema": {
         "type": "object",
-        "required": [],
+        "required": [
+          "score"
+        ],
         "properties": {
-          "reden": {
+          "score": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "opmerking": {
             "type": "string"
           }
         }
@@ -415,16 +542,10 @@
       "projection": [
         {
           "op": "set",
-          "path": "status",
-          "value": "afgesloten"
-        },
-        {
-          "op": "set",
-          "path": "afgesloten",
+          "path": "tevredenheid",
           "value": {
-            "door": "$actor",
-            "tijd": "$time",
-            "reden": "$data.reden"
+            "score": "$data.score",
+            "opmerking": "$data.opmerking"
           }
         }
       ]
