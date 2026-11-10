@@ -59,11 +59,18 @@ async fn main() {
     if auth.jwt_secret.is_none() && !auth.dev_auth && auth.oidc.is_none() {
         tracing::warn!("no OIDC, no OPENEVENTS_JWT_SECRET and no OPENEVENTS_DEV_AUTH: every request will be unauthorized");
     }
+    let notificaties =
+        openevents_server::notificaties::NotificatiesConfig::from_env().map(Arc::new);
+    if let Some(n) = &notificaties {
+        if n.subscribe.is_some() {
+            tokio::spawn(n.clone().keep_subscribed());
+        }
+    }
     let state = AppState {
         register,
         auth,
         tickets: Arc::new(Tickets::default()),
-        notificaties: openevents_server::notificaties::NotificatiesConfig::from_env().map(Arc::new),
+        notificaties,
     };
     let app = router(state).layer(CorsLayer::permissive());
 

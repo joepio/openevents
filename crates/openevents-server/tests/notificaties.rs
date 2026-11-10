@@ -80,6 +80,7 @@ fn app(register: Arc<Register>) -> Router {
             zgw_secret: Some("zgw-secret".into()),
             actor: "urn:openevents:notificaties".into(),
             client: reqwest::Client::new(),
+            subscribe: None,
         })),
     })
 }
@@ -242,4 +243,51 @@ async fn notificaties_become_a_zaakspiegel() {
     )
     .await;
     assert_eq!(s, StatusCode::NOT_FOUND);
+}
+
+/// OpenEvents subscribes itself, once, and again after Open Notificaties was reset.
+#[tokio::test]
+async fn subscribes_itself_at_open_notificaties() {
+    use std::sync::Mutex;
+    let store: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(vec![]));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let (s1, s2) = (store.clone(), store.clone());
+    let nrc = Router::new().route(
+        "/api/v1/abonnement",
+        get(move || {
+            let s = s1.clone();
+            async move { Json(Value::Array(s.lock().unwrap().clone())) }
+        })
+        .post(move |Json(b): Json<Value>| {
+            let s = s2.clone();
+            async move {
+                s.lock().unwrap().push(b);
+                StatusCode::CREATED
+            }
+        }),
+    );
+    tokio::spawn(async move { axum::serve(listener, nrc).await.unwrap() });
+    let cfg = NotificatiesConfig {
+        auth: AUTH.into(),
+        zgw_client_id: Some("openevents".into()),
+        zgw_secret: Some("zgw-secret".into()),
+        actor: "urn:openevents:notificaties".into(),
+        client: reqwest::Client::new(),
+        subscribe: Some(openevents_server::notificaties::Subscribe {
+            api: format!("{base}/api/v1"),
+            kanalen: vec!["zaken".into()],
+            callback: "https://events.demostack.nl/notificaties".into(),
+        }),
+    };
+    assert_eq!(cfg.ensure_subscribed().await, Ok(true));
+    assert_eq!(cfg.ensure_subscribed().await, Ok(false));
+    {
+        let s = store.lock().unwrap();
+        assert_eq!(s.len(), 1);
+        assert_eq!(s[0]["auth"], AUTH);
+        assert_eq!(s[0]["kanalen"][0]["naam"], "zaken");
+    }
+    store.lock().unwrap().clear(); // Open Notificaties was reset
+    assert_eq!(cfg.ensure_subscribed().await, Ok(true));
 }

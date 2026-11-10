@@ -17,10 +17,7 @@ Wat je moet weten:
 
 ## Route 2: niets veranderen, via ZGW-notificaties
 
-Systemen die nu al ZGW-notificaties versturen (Open Zaak via Open Notificaties) hoeven niets te veranderen. OpenEvents abonneert zich als gewone abonnee:
-
-- callback-URL: `https://<openevents>/notificaties`, `auth`: een geheim dat ook in `OPENEVENTS_NOTIFICATIES_AUTH` staat;
-- kanalen: bijvoorbeeld `zaken`.
+Systemen die nu al ZGW-notificaties versturen (Open Zaak via Open Notificaties) hoeven niets te veranderen, en Open Notificaties ook niet. OpenEvents meldt zich zelf aan als gewone abonnee (`OPENEVENTS_NOTIFICATIES_API`, `OPENEVENTS_NOTIFICATIES_KANALEN`, `OPENEVENTS_PUBLIC_URL`) en kijkt elke vijf minuten of het abonnement er nog is, zodat het ook een reset van Open Notificaties overleeft. Het enige wat OpenEvents nodig heeft is een client-id en secret die Open Zaak en Open Notificaties al kennen.
 
 Per notificatie haalt OpenEvents de resource op (met een ZGW-JWT, `OPENEVENTS_ZGW_CLIENT_ID` en `OPENEVENTS_ZGW_SECRET`) en slaat een event op:
 
@@ -44,4 +41,7 @@ Nog niet: vertrouwelijkheidaanduiding in de leesregel (dat vraagt een vergelijki
 | `OPENEVENTS_ACTOR_CLAIM` | claim met de actor-id, standaard `sub`; bij client credentials vaak `azp` of `client_id` |
 | `OPENEVENTS_NOTIFICATIES_AUTH` | exacte Authorization-header die Open Notificaties meestuurt; zonder deze variabele staat `/notificaties` uit |
 | `OPENEVENTS_ZGW_CLIENT_ID`, `OPENEVENTS_ZGW_SECRET` | om resources op te halen bij Open Zaak |
+| `OPENEVENTS_NOTIFICATIES_API` | Notificaties API (bijvoorbeeld `https://notificaties.example.nl/api/v1`): OpenEvents abonneert zich zelf |
+| `OPENEVENTS_NOTIFICATIES_KANALEN` | kanalen voor het abonnement, komma's, standaard `zaken` |
+| `OPENEVENTS_PUBLIC_URL` | publieke basis-URL van OpenEvents, voor de callback |
 | `OPENEVENTS_NOTIFICATIES_ACTOR` | actor-id van de adapter, standaard `urn:openevents:notificaties` (claim `rol=systeem`) |

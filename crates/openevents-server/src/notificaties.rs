@@ -19,6 +19,10 @@
 //! - `OPENEVENTS_ZGW_CLIENT_ID`, `OPENEVENTS_ZGW_SECRET`: to fetch resources.
 //! - `OPENEVENTS_NOTIFICATIES_ACTOR`: actor id for the events (default
 //!   `urn:openevents:notificaties`), with claim `rol=systeem`.
+//! - `OPENEVENTS_NOTIFICATIES_API`, `OPENEVENTS_NOTIFICATIES_KANALEN` (comma separated)
+//!   and `OPENEVENTS_PUBLIC_URL`: OpenEvents subscribes itself at Open Notificaties and
+//!   checks every few minutes that the abonnement is still there (it survives a reset of
+//!   Open Notificaties). So nothing has to be configured in Open Notificaties.
 
 use std::time::Duration;
 
@@ -33,6 +37,15 @@ pub struct NotificatiesConfig {
     pub zgw_secret: Option<String>,
     pub actor: String,
     pub client: reqwest::Client,
+    /// Self-subscription: Notificaties API root, kanalen, and our callback URL.
+    pub subscribe: Option<Subscribe>,
+}
+
+#[derive(Clone)]
+pub struct Subscribe {
+    pub api: String,
+    pub kanalen: Vec<String>,
+    pub callback: String,
 }
 
 impl NotificatiesConfig {
@@ -48,7 +61,90 @@ impl NotificatiesConfig {
                 .timeout(Duration::from_secs(15))
                 .build()
                 .expect("http client"),
+            subscribe: match (
+                env("OPENEVENTS_NOTIFICATIES_API"),
+                env("OPENEVENTS_PUBLIC_URL"),
+            ) {
+                (Some(api), Some(public)) => Some(Subscribe {
+                    api: api.trim_end_matches('/').to_string(),
+                    kanalen: env("OPENEVENTS_NOTIFICATIES_KANALEN")
+                        .unwrap_or_else(|| "zaken".into())
+                        .split(',')
+                        .map(|k| k.trim().to_string())
+                        .filter(|k| !k.is_empty())
+                        .collect(),
+                    callback: format!("{}/notificaties", public.trim_end_matches('/')),
+                }),
+                _ => None,
+            },
         })
+    }
+
+    /// Make sure our abonnement exists. Returns true when it had to be created.
+    pub async fn ensure_subscribed(&self) -> Result<bool, String> {
+        let Some(sub) = &self.subscribe else {
+            return Ok(false);
+        };
+        let token = self
+            .zgw_token()
+            .ok_or("no OPENEVENTS_ZGW_CLIENT_ID/SECRET")?;
+        let list: Value = self
+            .client
+            .get(format!("{}/abonnement", sub.api))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .and_then(|r| r.error_for_status())
+            .map_err(|e| format!("abonnementen: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("abonnementen: {e}"))?;
+        // Plain list, or paginated ({results: [...]}) depending on the version.
+        let items = list
+            .as_array()
+            .or_else(|| list["results"].as_array())
+            .cloned()
+            .unwrap_or_default();
+        if items
+            .iter()
+            .any(|a| a["callbackUrl"].as_str() == Some(sub.callback.as_str()))
+        {
+            return Ok(false);
+        }
+        let body = json!({
+            "callbackUrl": sub.callback,
+            "auth": self.auth,
+            "kanalen": sub.kanalen.iter().map(|k| json!({ "naam": k, "filters": {} })).collect::<Vec<_>>(),
+        });
+        let res = self
+            .client
+            .post(format!("{}/abonnement", sub.api))
+            .bearer_auth(&token)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("abonnement: {e}"))?;
+        if !res.status().is_success() {
+            let status = res.status();
+            let text = res.text().await.unwrap_or_default();
+            return Err(format!(
+                "abonnement: {status} {}",
+                text.chars().take(300).collect::<String>()
+            ));
+        }
+        Ok(true)
+    }
+
+    /// Check the abonnement now and then, for as long as the server runs.
+    pub async fn keep_subscribed(self: std::sync::Arc<Self>) {
+        loop {
+            match self.ensure_subscribed().await {
+                Ok(true) => tracing::info!("subscribed at Open Notificaties"),
+                Ok(false) => {}
+                Err(e) => tracing::warn!("Open Notificaties: {e}"),
+            }
+            tokio::time::sleep(Duration::from_secs(300)).await;
+        }
     }
 
     /// Does the Authorization header match? Compared in constant time.
