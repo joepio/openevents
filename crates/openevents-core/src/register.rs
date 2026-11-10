@@ -88,10 +88,15 @@ pub struct SubjectRecord {
 }
 
 impl SubjectRecord {
-    /// The representation returned to clients.
+    /// The representation returned to clients, optionally limited to some fields.
     pub fn representation(&self) -> Value {
-        let mut out = match &self.state {
-            Value::Object(m) => Value::Object(m.clone()),
+        self.representation_with(None)
+    }
+
+    pub fn representation_with(&self, fields: Option<&[String]>) -> Value {
+        let mut out = match (&self.state, fields) {
+            (state, Some(f)) => pick_fields(state, f),
+            (Value::Object(m), None) => Value::Object(m.clone()),
             _ => json!({}),
         };
         out["_meta"] = json!({
@@ -102,6 +107,9 @@ impl SubjectRecord {
             "created": self.created,
             "updated": self.updated,
         });
+        if fields.is_some() {
+            out["_meta"]["limited"] = json!(true);
+        }
         out
     }
 }
@@ -230,6 +238,18 @@ fn readable_by(t: &SubjectType, record: &SubjectRecord, actor: &Actor) -> bool {
     rule_allows(&t.rules.read, s, actor)
         || rule_allows(&t.rules.write, s, actor)
         || rule_allows(&t.rules.append, s, actor)
+}
+
+/// The fields this actor may see of this subject, or `None` for all fields.
+fn visible_fields<'a>(t: &'a SubjectType, state: &Value, actor: &Actor) -> Option<&'a [String]> {
+    if actor.admin {
+        return None;
+    }
+    let ctx = actor.ctx();
+    t.fields
+        .iter()
+        .find(|f| f.when.eval(state, &ctx))
+        .map(|f| f.show.as_slice())
 }
 
 fn pick_fields(state: &Value, fields: &[String]) -> Value {
@@ -423,10 +443,15 @@ impl Register {
 
     /// The projection of one subject. Unknown and unreadable look the same (404).
     pub fn get_subject(&self, actor: &Actor, subject: &str) -> Result<Value, RegisterError> {
-        match self.load_record(subject)? {
-            Some(r) if self.readable(&r, actor) && (!r.deleted || actor.admin) => {
-                Ok(r.representation())
+        let Some(r) = self.load_record(subject)? else {
+            return Err(RegisterError::NotFound);
+        };
+        let ps = self.profiles.read().unwrap();
+        match ps.subject_type(&r.type_name) {
+            Some((p, name)) if readable_by(&p.types[name], &r, actor) => {
+                Ok(r.representation_with(visible_fields(&p.types[name], &r.state, actor)))
             }
+            None if actor.admin => Ok(r.representation()),
             _ => Err(RegisterError::NotFound),
         }
     }
@@ -456,12 +481,15 @@ impl Register {
             .kv
             .range(&start, &prefix_end(&prefix), limit.min(MAX_PAGE))?;
         let mut out = Vec::new();
+        let mut cache = HashMap::new();
         for (k, _) in rows {
             let seq: u64 = String::from_utf8_lossy(&k[prefix.len()..])
                 .parse()
                 .unwrap_or(0);
             if let Some(e) = self.read_event(seq)? {
-                out.push(e);
+                if let Some(e) = self.present_event(&e, actor, &mut cache)? {
+                    out.push(e);
+                }
             }
         }
         Ok(out)
@@ -479,7 +507,7 @@ impl Register {
         let limit = limit.clamp(1, MAX_PAGE);
         let mut out = Vec::new();
         let mut cursor = after;
-        let mut cache: HashMap<String, bool> = HashMap::new();
+        let mut cache: HashMap<String, Visibility> = HashMap::new();
         let end = prefix_end(b"log/");
         loop {
             let rows = self.kv.range(&k_log(cursor + 1), &end, 500)?;
@@ -490,9 +518,10 @@ impl Register {
                 let seq: u64 = String::from_utf8_lossy(&k[4..]).parse().unwrap_or(0);
                 cursor = seq;
                 let event: Value = parse_json(&v)?;
-                if self.event_matches(&event, filter)
-                    && self.event_visible(&event, actor, &mut cache)?
-                {
+                if !self.event_matches(&event, filter) {
+                    continue;
+                }
+                if let Some(event) = self.present_event(&event, actor, &mut cache)? {
                     out.push(event);
                     if out.len() >= limit {
                         return Ok((out, cursor));
@@ -517,19 +546,64 @@ impl Register {
         true
     }
 
-    pub fn event_visible(
+    /// The event as this actor may see it: `None` when the subject is not readable,
+    /// without `data` when a field rule limits what the actor sees of the subject.
+    pub fn present_event(
         &self,
         event: &Value,
         actor: &Actor,
-        cache: &mut HashMap<String, bool>,
-    ) -> Result<bool, RegisterError> {
+        cache: &mut HashMap<String, Visibility>,
+    ) -> Result<Option<Value>, RegisterError> {
         let subject = event["subject"].as_str().unwrap_or("").to_string();
-        if let Some(v) = cache.get(&subject) {
-            return Ok(*v);
-        }
-        let v = self.may_read_subject(&subject, actor)?;
-        cache.insert(subject, v);
-        Ok(v)
+        let vis = match cache.get(&subject) {
+            Some(v) => *v,
+            None => {
+                let v = self.subject_visibility(&subject, actor)?;
+                cache.insert(subject, v);
+                v
+            }
+        };
+        Ok(match vis {
+            Visibility::Hidden => None,
+            Visibility::Full => Some(event.clone()),
+            Visibility::Limited => {
+                let mut e = event.clone();
+                if let Some(o) = e.as_object_mut() {
+                    o.remove("data");
+                    o.insert("dataHidden".into(), json!(true));
+                }
+                Some(e)
+            }
+        })
+    }
+
+    fn subject_visibility(
+        &self,
+        subject: &str,
+        actor: &Actor,
+    ) -> Result<Visibility, RegisterError> {
+        let Some(r) = self.load_record(subject)? else {
+            return Ok(if actor.admin {
+                Visibility::Full
+            } else {
+                Visibility::Hidden
+            });
+        };
+        let ps = self.profiles.read().unwrap();
+        Ok(match ps.subject_type(&r.type_name) {
+            Some((p, name)) => {
+                let t = &p.types[name];
+                if !readable_by(t, &r, actor) {
+                    Visibility::Hidden
+                } else if visible_fields(t, &r.state, actor).is_some() {
+                    Visibility::Limited
+                } else {
+                    Visibility::Full
+                }
+            }
+            None if actor.admin => Visibility::Full,
+            None => Visibility::Hidden,
+        })
     }
 
     /// `POST /query`: subjects of one type that match the filter AND the read rule.
@@ -554,7 +628,8 @@ impl Register {
         };
         let t = &profile.types[&type_name];
         let filter = match &req.filter {
-            None => None,
+            None | Some(Value::Null) => None,
+            Some(Value::String(t)) if t.trim().is_empty() => None,
             Some(f) => {
                 let e = cql2::parse_any(f).map_err(|e| {
                     RegisterError::Invalid(
@@ -571,6 +646,27 @@ impl Register {
                             "use the read rule of the profile instead",
                         )],
                     );
+                }
+                // Filtering on a field you may not see gives the same error as an unknown field.
+                let hidden: Option<&[String]> = visible_fields(t, &json!({}), actor);
+                if let Some(show) = hidden {
+                    let bad: Vec<_> = e
+                        .properties()
+                        .into_iter()
+                        .filter(|p| {
+                            !show
+                                .iter()
+                                .any(|s| p == s || p.starts_with(&format!("{s}.")))
+                        })
+                        .collect();
+                    if !bad.is_empty() {
+                        return invalid(
+                            "Field is not queryable.",
+                            bad.into_iter()
+                                .map(|p| ip("/filter", "not-queryable", p))
+                                .collect(),
+                        );
+                    }
                 }
                 if let Some(q) = &t.queryable {
                     let bad: Vec<_> = e
@@ -625,10 +721,11 @@ impl Register {
                     next = Some(subject_cursor(&results));
                     break 'scan;
                 }
-                let mut rep = record.representation();
+                let allowed = visible_fields(t, &record.state, actor);
+                let mut rep = record.representation_with(allowed);
                 if let Some(fields) = &req.fields {
                     let meta = rep["_meta"].clone();
-                    rep = pick_fields(&record.state, fields);
+                    rep = pick_fields(&rep, fields);
                     rep["_meta"] = meta;
                 }
                 results.push(rep);
@@ -1154,6 +1251,13 @@ impl Register {
             new_subject,
         }))
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Visibility {
+    Hidden,
+    Limited,
+    Full,
 }
 
 enum CommitProblem {

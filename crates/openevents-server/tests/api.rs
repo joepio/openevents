@@ -761,3 +761,93 @@ async fn optional_fields_may_be_left_out() {
     .await;
     assert!(b.get("team").is_none() && b.get("aanleiding").is_none());
 }
+
+const KIM: &str = "dev:https://id.example.nl/kim|rol=kcc";
+
+#[tokio::test]
+async fn field_rules_limit_what_kcc_sees() {
+    let app = app();
+    install(&app).await;
+    start_gesprek(&app).await;
+    call(
+        &app,
+        "POST",
+        "/events",
+        Some(SUZANNE),
+        Some(ev(
+            "e2",
+            "nl.vng.gesprekken.bijdrage.toegevoegd",
+            G1,
+            json!({ "tekst": "Geheim" }),
+        )),
+    )
+    .await;
+
+    let (s, b, _) = call(
+        &app,
+        "GET",
+        &format!("/subjects/{}", enc(G1)),
+        Some(KIM),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(b["onderwerp"], "Vraag over mijn aanvraag");
+    assert!(b.get("bijdragen").is_none() && b.get("deelnames").is_none());
+    assert_eq!(b["_meta"]["limited"], true);
+
+    let (_, b, _) = call(&app, "GET", "/events?format=json", Some(KIM), None).await;
+    assert_eq!(b["events"].as_array().unwrap().len(), 2);
+    assert!(b["events"][1].get("data").is_none());
+    assert_eq!(b["events"][1]["dataHidden"], true);
+
+    let (_, b, _) = call(
+        &app,
+        "POST",
+        "/query",
+        Some(KIM),
+        Some(json!({ "type": "nl.vng.gesprekken.gesprek", "filter": "status = 'open'" })),
+    )
+    .await;
+    assert_eq!(b["results"].as_array().unwrap().len(), 1);
+    assert!(b["results"][0].get("bijdragen").is_none());
+    // Filtering on a field KCC may not see is the same error as an unknown field.
+    let (s, _, _) = call(
+        &app,
+        "POST",
+        "/query",
+        Some(KIM),
+        Some(json!({ "type": "nl.vng.gesprekken.gesprek", "filter": "deelnames.partij = 'x'" })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+    // Suzanne still sees everything.
+    let (_, b, _) = call(
+        &app,
+        "GET",
+        &format!("/subjects/{}", enc(G1)),
+        Some(SUZANNE),
+        None,
+    )
+    .await;
+    assert_eq!(b["bijdragen"][0]["tekst"], "Geheim");
+}
+
+#[tokio::test]
+async fn ui_and_personas() {
+    let app = app();
+    install(&app).await;
+    let (s, b, _) = call(&app, "GET", "/ui", None, None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(b.as_str().unwrap().contains("OpenEvents"));
+    let (_, b, _) = call(&app, "GET", "/ui/config", None, None).await;
+    assert_eq!(b["devAuth"], true);
+    let labels: Vec<_> = b["personas"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["label"].as_str().unwrap().to_string())
+        .collect();
+    assert!(labels.iter().any(|l| l.contains("KCC")));
+    assert!(labels[0].contains("Beheerder"));
+}

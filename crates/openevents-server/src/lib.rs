@@ -38,6 +38,9 @@ pub fn router(state: AppState) -> Router {
         .route("/query", post(post_query))
         .route("/profiles", get(list_profiles))
         .route("/profiles/{id}", get(get_profile).put(put_profile))
+        .route("/ui", get(ui))
+        .route("/ui/", get(ui))
+        .route("/ui/config", get(ui_config))
         .with_state(state)
 }
 
@@ -258,7 +261,7 @@ fn event_stream(
                 break;
             }
         }
-        let mut cache: HashMap<String, bool> = HashMap::new();
+        let mut cache = HashMap::new();
         loop {
             match rx.recv().await {
                 Ok(stored) => {
@@ -268,10 +271,10 @@ fn event_stream(
                     last = stored.sequence;
                     // Rights can change with every event, so check against the current state.
                     cache.clear();
-                    if register.event_matches(&stored.event, &filter)
-                        && register.event_visible(&stored.event, &actor, &mut cache).unwrap_or(false)
-                    {
-                        yield Ok(sse_event(&stored.event));
+                    if register.event_matches(&stored.event, &filter) {
+                        if let Ok(Some(e)) = register.present_event(&stored.event, &actor, &mut cache) {
+                            yield Ok(sse_event(&e));
+                        }
                     }
                 }
                 Err(RecvError::Lagged(_)) => {
@@ -385,4 +388,41 @@ async fn put_profile(
         Ok(v) => Json(v).into_response(),
         Err(e) => error_response(e),
     }
+}
+
+// ---------- UI ----------
+
+async fn ui() -> Response {
+    let mut res = include_str!("ui.html").into_response();
+    res.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    res
+}
+
+/// What the UI needs to know. Personas (from the profiles) only in dev mode, because
+/// they are logins without a password.
+async fn ui_config(State(state): State<AppState>) -> Json<Value> {
+    let mut personas = Vec::new();
+    if state.auth.dev_auth {
+        for admin in &state.auth.admins {
+            personas.push(json!({ "id": admin, "label": "Beheerder (ziet alles)", "claims": {}, "admin": true }));
+        }
+        for p in state.register.list_profiles() {
+            if let Some(raw) = p["id"]
+                .as_str()
+                .and_then(|id| state.register.get_profile(id))
+            {
+                if let Some(list) = raw["personas"].as_array() {
+                    for persona in list {
+                        if !personas.iter().any(|x| x["id"] == persona["id"]) {
+                            personas.push(persona.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Json(json!({ "devAuth": state.auth.dev_auth, "personas": personas }))
 }

@@ -57,6 +57,8 @@ OPENEVENTS_DEV_AUTH=true OPENEVENTS_ADMINS=urn:admin OPENEVENTS_PROFILES=example
 cargo test
 ```
 
+Open daarna http://localhost:8080/ui voor de beheer-UI: stand (materialized state), events (live), queries en schrijven. Met `OPENEVENTS_DEV_AUTH=true` kies je rechtsboven een persona uit de profielen ("Bekijk als", bijvoorbeeld inwoner of KCC-medewerker) en zie je wat die persoon mag zien; het paneel "Wat ziet wie?" vergelijkt alle persona's voor één subject. Zonder dev-modus plak je een token. Demodata laden: `examples/seed.sh` (tegen `http://localhost:8080`, of geef een andere basis-URL mee).
+
 Of met Docker:
 
 ```sh
@@ -94,6 +96,8 @@ curl -s localhost:8080/query -H "$T" -H 'content-type: application/json' \
 - profielen tijdens runtime (`PUT /profiles/{id}`), JSON Schema voor `data` en voor de stand, declaratieve projectie (`set`, `merge`, `append`, `remove`, `increment`, paden met `{$data.x}`)
 - lees-, maak-, schrijf- en toevoegregels in CQL2-tekst of CQL2-JSON (`=`, `<>`, `<`, `<=`, `>`, `>=`, `IN`, `IS NULL`, `AND`, `OR`, `NOT`, `actor()`, `actor('claim')`)
 - `GET /events` als SSE (`Last-Event-ID`, tickets) of JSON, `GET /subjects/{subject}`, `GET /subjects/{subject}/events`
+- veldregels (`rules.fields` met `when` en `show`): wie een subject alleen beperkt mag zien, krijgt alleen de genoemde velden en events zonder `data` (`dataHidden: true`)
+- persona's in profielen en een beheer-UI op `/ui`
 - `POST /query` met filter, `fields`, paginering en `feedCursor`; nog zonder veldindexen (scant per type), zonder paden over verwijzingen en zonder `include`
 
 Nog niet: paden over verwijzingen, indexen, views, wissen, OIDC met JWKS, modules.

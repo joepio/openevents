@@ -32,8 +32,15 @@ pub struct Rules {
     pub append: Option<Expr>,
 }
 
+/// Which fields an actor sees: the first rule whose `when` holds applies.
+pub struct FieldRule {
+    pub when: Expr,
+    pub show: Vec<String>,
+}
+
 pub struct SubjectType {
     pub name: String,
+    pub fields: Vec<FieldRule>,
     pub schema: Option<jsonschema::Validator>,
     pub queryable: Option<Vec<String>>,
     pub allow_commits: bool,
@@ -137,10 +144,37 @@ impl Profile {
                         }
                     }
                 };
+                let mut fields = Vec::new();
+                if let Some(list) = def.get("rules").and_then(|r| r.get("fields")) {
+                    let list = list
+                        .as_array()
+                        .ok_or_else(|| ProfileError(format!("{at}.rules.fields must be a list")))?;
+                    for (i, f) in list.iter().enumerate() {
+                        let fat = format!("{at}.rules.fields[{i}]");
+                        let when = f
+                            .get("when")
+                            .ok_or_else(|| ProfileError(format!("{fat}: missing when")))
+                            .and_then(|w| {
+                                cql2::parse_any(w)
+                                    .map_err(|e| ProfileError(format!("{fat}.when: {e}")))
+                            })?;
+                        let show = f
+                            .get("show")
+                            .and_then(|s| s.as_array())
+                            .ok_or_else(|| {
+                                ProfileError(format!("{fat}: show must be a list of fields"))
+                            })?
+                            .iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect();
+                        fields.push(FieldRule { when, show });
+                    }
+                }
                 types.insert(
                     name.clone(),
                     SubjectType {
                         name: name.clone(),
+                        fields,
                         schema: def
                             .get("schema")
                             .map(|s| compile_schema(s, &at))

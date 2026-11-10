@@ -2,26 +2,116 @@
   "id": "nl.vng.gesprekken",
   "version": "0.1.0",
   "title": "MijnGesprekken als profiel op OpenEvents",
+  "personas": [
+    {
+      "id": "https://id.example.nl/suzanne",
+      "label": "Suzanne (inwoner)",
+      "claims": {
+        "rol": "inwoner"
+      }
+    },
+    {
+      "id": "https://id.example.nl/lukas",
+      "label": "Lukas (curator van Suzanne)",
+      "claims": {
+        "rol": "curator"
+      }
+    },
+    {
+      "id": "https://id.example.nl/merve",
+      "label": "Merve (Wmo-consulent)",
+      "claims": {
+        "rol": "medewerker",
+        "team": "wmo"
+      }
+    },
+    {
+      "id": "https://id.example.nl/kim",
+      "label": "Kim (KCC-medewerker)",
+      "claims": {
+        "rol": "kcc"
+      }
+    },
+    {
+      "id": "https://id.example.nl/karel",
+      "label": "Karel (andere inwoner)",
+      "claims": {
+        "rol": "inwoner"
+      }
+    }
+  ],
   "types": {
     "nl.vng.gesprekken.gesprek": {
       "allowCommits": false,
-      "queryable": ["status", "onderwerp", "team", "aanleiding.zaak", "deelnames.partij", "laatsteBijdrage.tijd"],
+      "queryable": [
+        "status",
+        "onderwerp",
+        "team",
+        "aanleiding.zaak",
+        "deelnames.partij",
+        "laatsteBijdrage.tijd"
+      ],
       "schema": {
         "type": "object",
-        "required": ["onderwerp", "status", "deelnames"],
+        "required": [
+          "onderwerp",
+          "status",
+          "deelnames"
+        ],
         "properties": {
-          "onderwerp": { "type": "string", "minLength": 1 },
-          "status": { "enum": ["open", "afgesloten"] },
-          "team": { "type": "string" },
-          "aanleiding": { "type": "object", "properties": { "zaak": { "type": "string", "format": "uri" } } },
-          "deelnames": { "type": "array", "items": { "type": "object", "required": ["partij", "rol"] } }
+          "onderwerp": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": [
+              "open",
+              "afgesloten"
+            ]
+          },
+          "team": {
+            "type": "string"
+          },
+          "aanleiding": {
+            "type": "object",
+            "properties": {
+              "zaak": {
+                "type": "string",
+                "format": "uri"
+              }
+            }
+          },
+          "deelnames": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "partij",
+                "rol"
+              ]
+            }
+          }
         }
       },
       "rules": {
-        "read": "deelnames.partij = actor() OR team = actor('team')",
+        "read": "deelnames.partij = actor() OR team = actor('team') OR actor('rol') = 'kcc'",
         "create": "deelnames.partij = actor() OR team = actor('team')",
         "append": "deelnames.partij = actor() AND status = 'open'",
-        "write": "rollen.curator = actor() OR rollen.bewindvoerder = actor() OR rollen.behandelaar = actor() OR team = actor('team')"
+        "write": "rollen.curator = actor() OR rollen.bewindvoerder = actor() OR rollen.behandelaar = actor() OR team = actor('team')",
+        "fields": [
+          {
+            "when": "actor('rol') = 'kcc'",
+            "show": [
+              "onderwerp",
+              "status",
+              "aanleiding",
+              "team",
+              "laatsteBijdrage",
+              "aantalBijdragen",
+              "gestart"
+            ]
+          }
+        ]
       }
     }
   },
@@ -31,27 +121,86 @@
       "creates": true,
       "dataschema": {
         "type": "object",
-        "required": ["onderwerp", "initiatiefnemer"],
+        "required": [
+          "onderwerp",
+          "initiatiefnemer"
+        ],
         "additionalProperties": false,
         "properties": {
-          "onderwerp": { "type": "string", "minLength": 1 },
-          "team": { "type": "string" },
-          "aanleiding": { "type": "object", "properties": { "zaak": { "type": "string" } } },
+          "onderwerp": {
+            "type": "string",
+            "minLength": 1
+          },
+          "team": {
+            "type": "string"
+          },
+          "aanleiding": {
+            "type": "object",
+            "properties": {
+              "zaak": {
+                "type": "string"
+              }
+            }
+          },
           "initiatiefnemer": {
             "type": "object",
-            "required": ["partij", "rol"],
-            "properties": { "partij": { "type": "string" }, "rol": { "enum": ["inwoner", "curator", "bewindvoerder", "gemachtigde", "behandelaar"] } }
+            "required": [
+              "partij",
+              "rol"
+            ],
+            "properties": {
+              "partij": {
+                "type": "string"
+              },
+              "rol": {
+                "enum": [
+                  "inwoner",
+                  "curator",
+                  "bewindvoerder",
+                  "gemachtigde",
+                  "behandelaar"
+                ]
+              }
+            }
           }
         }
       },
       "projection": [
-        { "op": "set", "path": "onderwerp", "value": "$data.onderwerp" },
-        { "op": "set", "path": "team", "value": "$data.team" },
-        { "op": "set", "path": "aanleiding", "value": "$data.aanleiding" },
-        { "op": "set", "path": "status", "value": "open" },
-        { "op": "set", "path": "gestart", "value": "$time" },
-        { "op": "append", "path": "deelnames", "value": "$data.initiatiefnemer" },
-        { "op": "append", "path": "rollen.{$data.initiatiefnemer.rol}", "value": "$data.initiatiefnemer.partij" }
+        {
+          "op": "set",
+          "path": "onderwerp",
+          "value": "$data.onderwerp"
+        },
+        {
+          "op": "set",
+          "path": "team",
+          "value": "$data.team"
+        },
+        {
+          "op": "set",
+          "path": "aanleiding",
+          "value": "$data.aanleiding"
+        },
+        {
+          "op": "set",
+          "path": "status",
+          "value": "open"
+        },
+        {
+          "op": "set",
+          "path": "gestart",
+          "value": "$time"
+        },
+        {
+          "op": "append",
+          "path": "deelnames",
+          "value": "$data.initiatiefnemer"
+        },
+        {
+          "op": "append",
+          "path": "rollen.{$data.initiatiefnemer.rol}",
+          "value": "$data.initiatiefnemer.partij"
+        }
       ]
     },
     "nl.vng.gesprekken.deelname.toegevoegd": {
@@ -59,12 +208,36 @@
       "right": "write",
       "dataschema": {
         "type": "object",
-        "required": ["partij", "rol"],
-        "properties": { "partij": { "type": "string" }, "rol": { "enum": ["inwoner", "curator", "bewindvoerder", "gemachtigde", "behandelaar"] } }
+        "required": [
+          "partij",
+          "rol"
+        ],
+        "properties": {
+          "partij": {
+            "type": "string"
+          },
+          "rol": {
+            "enum": [
+              "inwoner",
+              "curator",
+              "bewindvoerder",
+              "gemachtigde",
+              "behandelaar"
+            ]
+          }
+        }
       },
       "projection": [
-        { "op": "append", "path": "deelnames", "value": "$data" },
-        { "op": "append", "path": "rollen.{$data.rol}", "value": "$data.partij" }
+        {
+          "op": "append",
+          "path": "deelnames",
+          "value": "$data"
+        },
+        {
+          "op": "append",
+          "path": "rollen.{$data.rol}",
+          "value": "$data.partij"
+        }
       ]
     },
     "nl.vng.gesprekken.bijdrage.toegevoegd": {
@@ -72,22 +245,71 @@
       "right": "append",
       "dataschema": {
         "type": "object",
-        "required": ["tekst"],
-        "properties": { "tekst": { "type": "string", "minLength": 1 }, "automatisch": { "type": "boolean" } }
+        "required": [
+          "tekst"
+        ],
+        "properties": {
+          "tekst": {
+            "type": "string",
+            "minLength": 1
+          },
+          "automatisch": {
+            "type": "boolean"
+          }
+        }
       },
       "projection": [
-        { "op": "append", "path": "bijdragen", "value": { "id": "$id", "tekst": "$data.tekst", "door": "$actor", "tijd": "$time", "automatisch": "$data.automatisch" } },
-        { "op": "set", "path": "laatsteBijdrage", "value": { "door": "$actor", "tijd": "$time" } },
-        { "op": "increment", "path": "aantalBijdragen" }
+        {
+          "op": "append",
+          "path": "bijdragen",
+          "value": {
+            "id": "$id",
+            "tekst": "$data.tekst",
+            "door": "$actor",
+            "tijd": "$time",
+            "automatisch": "$data.automatisch"
+          }
+        },
+        {
+          "op": "set",
+          "path": "laatsteBijdrage",
+          "value": {
+            "door": "$actor",
+            "tijd": "$time"
+          }
+        },
+        {
+          "op": "increment",
+          "path": "aantalBijdragen"
+        }
       ]
     },
     "nl.vng.gesprekken.gesprek.afgesloten": {
       "subjectType": "nl.vng.gesprekken.gesprek",
       "right": "append",
-      "dataschema": { "type": "object", "properties": { "reden": { "type": "string" } } },
+      "dataschema": {
+        "type": "object",
+        "properties": {
+          "reden": {
+            "type": "string"
+          }
+        }
+      },
       "projection": [
-        { "op": "set", "path": "status", "value": "afgesloten" },
-        { "op": "set", "path": "afgesloten", "value": { "door": "$actor", "tijd": "$time", "reden": "$data.reden" } }
+        {
+          "op": "set",
+          "path": "status",
+          "value": "afgesloten"
+        },
+        {
+          "op": "set",
+          "path": "afgesloten",
+          "value": {
+            "door": "$actor",
+            "tijd": "$time",
+            "reden": "$data.reden"
+          }
+        }
       ]
     }
   }

@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenEvents</title>
+<style>
+:root {
+  --bg: #f7f7f5; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6b66; --line: #e3e3de;
+  --accent: #1f5fbf; --accent-ink: #ffffff; --ok: #1d7a46; --warn: #a15c00; --bad: #b42318;
+  --code: #f1f1ee; --key: #7a3e9d; --str: #1d7a46; --num: #a15c00; --sel: #e8f0fc;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 14px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #151514; --panel: #1e1e1c; --ink: #ececea; --muted: #9a9a94; --line: #33332f;
+    --accent: #6ea2f0; --accent-ink: #0d0d0c; --ok: #5cc28a; --warn: #e0a24a; --bad: #f07a6e;
+    --code: #262624; --key: #c79be6; --str: #7fd3a3; --num: #e8b46a; --sel: #23324a;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); }
+header { display: flex; gap: 12px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; flex-wrap: wrap; }
+header h1 { font-size: 16px; margin: 0 8px 0 0; }
+nav { display: flex; gap: 4px; flex-wrap: wrap; }
+nav button { background: none; border: 1px solid transparent; color: var(--muted); padding: 6px 10px; border-radius: 6px; cursor: pointer; font: inherit; }
+nav button.active { color: var(--ink); border-color: var(--line); background: var(--bg); }
+.spacer { flex: 1; }
+.as { display: flex; gap: 6px; align-items: center; color: var(--muted); }
+main { padding: 16px; max-width: 1400px; margin: 0 auto; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+input, select, textarea { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+input.grow { flex: 1; min-width: 160px; }
+textarea { width: 100%; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; min-height: 180px; }
+button.primary, button.secondary { font: inherit; border-radius: 6px; padding: 6px 12px; cursor: pointer; border: 1px solid var(--accent); }
+button.primary { background: var(--accent); color: var(--accent-ink); }
+button.secondary { background: none; color: var(--accent); }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; font-size: 12px; }
+tr.click { cursor: pointer; }
+tr.click:hover, tr.selected { background: var(--sel); }
+td.mono, .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; word-break: break-all; }
+pre.json { background: var(--code); border-radius: 6px; padding: 10px; margin: 0; overflow: auto; max-height: 520px; font-size: 12.5px; white-space: pre-wrap; word-break: break-word; }
+.k { color: var(--key); } .s { color: var(--str); } .n { color: var(--num); } .b { color: var(--accent); }
+h2 { font-size: 14px; margin: 0 0 8px; }
+.muted { color: var(--muted); }
+.badge { display: inline-block; padding: 1px 6px; border-radius: 10px; font-size: 11.5px; border: 1px solid var(--line); color: var(--muted); }
+.badge.ok { color: var(--ok); border-color: var(--ok); } .badge.warn { color: var(--warn); border-color: var(--warn); } .badge.bad { color: var(--bad); border-color: var(--bad); }
+.views { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+.view { border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+.view details summary { cursor: pointer; color: var(--muted); }
+.status { min-height: 20px; }
+.status.bad { color: var(--bad); } .status.ok { color: var(--ok); }
+.hidden { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>OpenEvents</h1>
+  <nav id="tabs">
+    <button data-tab="stand" class="active">Stand</button>
+    <button data-tab="events">Events</button>
+    <button data-tab="query">Query</button>
+    <button data-tab="schrijven">Schrijven</button>
+    <button data-tab="profielen">Profielen</button>
+  </nav>
+  <span class="spacer"></span>
+  <label class="as" id="as-persona">Bekijk als <select id="persona"></select></label>
+  <label class="as hidden" id="as-token">Token <input id="token" type="password" placeholder="Bearer-token" size="28"></label>
+</header>
+<main>
+
+<section id="tab-stand">
+  <div class="panel">
+    <div class="row">
+      <select id="stand-type"></select>
+      <input id="stand-filter" class="grow mono" placeholder="CQL2-filter, bijv. status = 'open'">
+      <button class="primary" id="stand-zoek">Zoek</button>
+    </div>
+    <div id="stand-status" class="status muted"></div>
+    <table><thead><tr><th>Onderwerp</th><th>Samenvatting</th><th>Bijgewerkt</th></tr></thead><tbody id="stand-rows"></tbody></table>
+    <div class="row" style="margin-top:8px"><button class="secondary hidden" id="stand-meer">Meer</button></div>
+  </div>
+  <div id="stand-detail" class="hidden">
+    <div class="grid">
+      <div class="panel"><h2>Stand <span id="detail-subject" class="mono muted"></span></h2><pre class="json" id="detail-state"></pre></div>
+      <div class="panel"><h2>Tijdlijn</h2><table><tbody id="detail-timeline"></tbody></table><pre class="json hidden" id="detail-event"></pre></div>
+    </div>
+    <div class="panel" id="detail-as-panel"><h2>Wat ziet wie?</h2><p class="muted" style="margin-top:0">Dezelfde stand, opgevraagd met elke persona. Zo zie je de lees- en veldregels van het profiel aan het werk.</p><div class="views" id="detail-views"></div></div>
+  </div>
+</section>
+
+<section id="tab-events" class="hidden">
+  <div class="panel">
+    <div class="row">
+      <input id="ev-type" class="mono" placeholder="type begint met..." size="28">
+      <input id="ev-subject" class="mono grow" placeholder="onderwerp (exact)">
+      <label><input type="checkbox" id="ev-from-start" checked> vanaf het begin</label>
+      <button class="primary" id="ev-connect">Volg</button>
+      <button class="secondary" id="ev-stop">Stop</button>
+      <button class="secondary" id="ev-clear">Leeg</button>
+    </div>
+    <div id="ev-status" class="status muted"></div>
+  </div>
+  <div class="grid">
+    <div class="panel"><table><thead><tr><th>#</th><th>Type</th><th>Onderwerp</th><th>Door</th></tr></thead><tbody id="ev-rows"></tbody></table></div>
+    <div class="panel"><h2>Event</h2><pre class="json" id="ev-detail">Klik op een event.</pre></div>
+  </div>
+</section>
+
+<section id="tab-query" class="hidden">
+  <div class="grid">
+    <div class="panel">
+      <h2>POST /query</h2>
+      <textarea id="q-body"></textarea>
+      <div class="row" style="margin-top:8px"><button class="primary" id="q-run">Voer uit</button><button class="secondary" id="q-follow">Volg live</button><span id="q-status" class="status muted"></span></div>
+      <p class="muted">Het filter is CQL2-tekst (een string) of CQL2-JSON. Je filter gaat altijd met AND samen met de leesregel van het profiel. <code>actor()</code> mag alleen in profielregels.</p>
+    </div>
+    <div class="panel"><h2>Resultaat</h2><pre class="json" id="q-result"></pre></div>
+  </div>
+</section>
+
+<section id="tab-schrijven" class="hidden">
+  <div class="grid">
+    <div class="panel">
+      <div class="row">
+        <select id="w-type"></select>
+        <input id="w-subject" class="grow mono" placeholder="onderwerp">
+        <button class="secondary" id="w-new">Nieuw</button>
+      </div>
+      <div class="row"><input id="w-prev" class="grow mono" placeholder="previouscommit (optioneel)"></div>
+      <textarea id="w-data"></textarea>
+      <div class="row" style="margin-top:8px"><button class="primary" id="w-send">Verstuur als <span id="w-as"></span></button></div>
+    </div>
+    <div class="panel"><h2>Antwoord</h2><pre class="json" id="w-result"></pre><h2 style="margin-top:12px">Verstuurd</h2><pre class="json" id="w-sent"></pre></div>
+  </div>
+</section>
+
+<section id="tab-profielen" class="hidden">
+  <div class="grid">
+    <div class="panel"><table><tbody id="p-rows"></tbody></table></div>
+    <div class="panel"><pre class="json" id="p-detail">Klik op een profiel.</pre></div>
+  </div>
+</section>
+
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const state = { config: null, personas: [], persona: null, profiles: [], types: [], events: [], stream: null, cursor: null };
+
+function store(key, value) { try { if (value === undefined) return sessionStorage.getItem(key); sessionStorage.setItem(key, value); } catch (e) { return null; } }
+
+function tokenFor(p) {
+  if (!p) return $("token").value.trim();
+  const parts = ["dev:" + p.id];
+  for (const [k, v] of Object.entries(p.claims || {})) parts.push(k + "=" + (Array.isArray(v) ? v.join(",") : v));
+  return parts.join("|");
+}
+function currentToken() { return tokenFor(state.persona); }
+
+async function api(method, path, body, token) {
+  const headers = { "accept": "application/json" };
+  const t = token === undefined ? currentToken() : token;
+  if (t) headers["authorization"] = "Bearer " + t;
+  if (body !== undefined) headers["content-type"] = "application/json";
+  const res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  let data = null;
+  const text = await res.text();
+  try { data = JSON.parse(text); } catch (e) { data = text; }
+  return { status: res.status, ok: res.ok, data };
+}
+
+function el(tag, attrs, ...children) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "class") n.className = v; else if (k.startsWith("on")) n.addEventListener(k.slice(2), v); else n.setAttribute(k, v);
+  }
+  for (const c of children) if (c !== null && c !== undefined) n.append(c instanceof Node ? c : String(c));
+  return n;
+}
+
+// JSON with colours, built from text nodes (never innerHTML of data).
+function renderJson(target, value) {
+  target.textContent = "";
+  const walk = (v, indent) => {
+    const pad = "  ".repeat(indent);
+    if (Array.isArray(v)) {
+      if (!v.length) { target.append("[]"); return; }
+      target.append("[\n");
+      v.forEach((x, i) => { target.append(pad + "  "); walk(x, indent + 1); target.append(i < v.length - 1 ? ",\n" : "\n"); });
+      target.append(pad + "]");
+    } else if (v && typeof v === "object") {
+      const keys = Object.keys(v);
+      if (!keys.length) { target.append("{}"); return; }
+      target.append("{\n");
+      keys.forEach((k, i) => {
+        target.append(pad + "  "); target.append(el("span", { class: "k" }, JSON.stringify(k))); target.append(": ");
+        walk(v[k], indent + 1); target.append(i < keys.length - 1 ? ",\n" : "\n");
+      });
+      target.append(pad + "}");
+    } else if (typeof v === "string") target.append(el("span", { class: "s" }, JSON.stringify(v)));
+    else if (typeof v === "number") target.append(el("span", { class: "n" }, String(v)));
+    else target.append(el("span", { class: "b" }, String(v)));
+  };
+  walk(value, 0);
+}
+
+function setStatus(id, text, kind) { const n = $(id); n.textContent = text || ""; n.className = "status " + (kind || "muted"); }
+function problemText(r) { if (r.data && r.data.title) return r.status + " " + r.data.title + (r.data.invalidParams ? ": " + r.data.invalidParams.map(p => p.name + " " + p.reason).join("; ") : ""); return "HTTP " + r.status; }
+function shortActor(a) { if (!a) return ""; const p = state.personas.find(x => x.id === a); return p ? p.label.split(" ")[0] : a.replace(/^https?:\/\//, ""); }
+function summary(obj) {
+  const out = [];
+  for (const [k, v] of Object.entries(obj)) {
+    if (k === "_meta") continue;
+    if (typeof v === "string" || typeof v === "number") out.push(k + ": " + v);
+    if (out.length >= 3) break;
+  }
+  return out.join(" · ");
+}
+
+// ---------- tabs ----------
+$("tabs").addEventListener("click", (e) => {
+  const tab = e.target.dataset && e.target.dataset.tab;
+  if (!tab) return;
+  for (const b of document.querySelectorAll("#tabs button")) b.classList.toggle("active", b.dataset.tab === tab);
+  for (const s of document.querySelectorAll("main > section")) s.classList.toggle("hidden", s.id !== "tab-" + tab);
+  store("tab", tab);
+});
+
+// ---------- personas ----------
+function onPersonaChange() {
+  const id = $("persona").value;
+  state.persona = state.personas.find(p => p.id === id) || null;
+  store("persona", id);
+  $("w-as").textContent = state.persona ? state.persona.label.split(" (")[0] : "token";
+  if (state.stream) connectEvents();
+  if (!$("stand-detail").classList.contains("hidden") && state.selected) openSubject(state.selected);
+  zoek();
+}
+$("persona").addEventListener("change", onPersonaChange);
+$("token").addEventListener("change", () => { store("token", $("token").value); zoek(); });
+
+// ---------- stand ----------
+async function zoek(more) {
+  const type = $("stand-type").value;
+  if (!type) return;
+  const filter = $("stand-filter").value.trim();
+  const body = { type, pageSize: 25 };
+  if (filter) body.filter = filter;
+  if (more && state.cursor) body.cursor = state.cursor;
+  const r = await api("POST", "/query", body);
+  if (!more) $("stand-rows").textContent = "";
+  if (!r.ok) { setStatus("stand-status", problemText(r), "bad"); return; }
+  state.cursor = r.data.next;
+  $("stand-meer").classList.toggle("hidden", !r.data.next);
+  for (const item of r.data.results) {
+    const m = item._meta;
+    const tr = el("tr", { class: "click", onclick: () => openSubject(m.subject) },
+      el("td", { class: "mono" }, m.subject), el("td", {}, summary(item), m.limited ? " " : "", m.limited ? el("span", { class: "badge warn" }, "beperkt") : null), el("td", { class: "muted" }, (m.updated || "").replace("T", " ").slice(0, 19)));
+    tr.dataset.subject = m.subject;
+    $("stand-rows").append(tr);
+  }
+  setStatus("stand-status", $("stand-rows").children.length + " zichtbaar voor " + ($("persona").selectedOptions[0] ? $("persona").selectedOptions[0].textContent : "dit token") + " · feedCursor " + r.data.feedCursor);
+}
+$("stand-zoek").addEventListener("click", () => zoek());
+$("stand-filter").addEventListener("keydown", (e) => { if (e.key === "Enter") zoek(); });
+$("stand-type").addEventListener("change", () => { store("type", $("stand-type").value); zoek(); });
+$("stand-meer").addEventListener("click", () => zoek(true));
+
+async function openSubject(subject) {
+  state.selected = subject;
+  for (const tr of $("stand-rows").children) tr.classList.toggle("selected", tr.dataset.subject === subject);
+  $("stand-detail").classList.remove("hidden");
+  $("detail-subject").textContent = subject;
+  const enc = encodeURIComponent(subject);
+  const [s, t] = await Promise.all([api("GET", "/subjects/" + enc), api("GET", "/subjects/" + enc + "/events?limit=100")]);
+  renderJson($("detail-state"), s.ok ? s.data : { status: s.status, detail: "niet zichtbaar voor deze persona" });
+  const tl = $("detail-timeline"); tl.textContent = ""; $("detail-event").classList.add("hidden");
+  for (const ev of (t.ok ? t.data.events : [])) {
+    tl.append(el("tr", { class: "click", onclick: () => { $("detail-event").classList.remove("hidden"); renderJson($("detail-event"), ev); } },
+      el("td", { class: "muted" }, ev.sequence), el("td", { class: "mono" }, ev.type), el("td", {}, shortActor(ev.actor)), el("td", {}, ev.dataHidden ? el("span", { class: "badge warn" }, "data verborgen") : "")));
+  }
+  // What does each persona see?
+  const views = $("detail-views"); views.textContent = "";
+  $("detail-as-panel").classList.toggle("hidden", !state.personas.length);
+  for (const p of state.personas) {
+    const r = await api("GET", "/subjects/" + enc, undefined, tokenFor(p));
+    let badge;
+    if (!r.ok) badge = el("span", { class: "badge bad" }, "ziet niets");
+    else if (r.data._meta && r.data._meta.limited) badge = el("span", { class: "badge warn" }, "beperkt: " + Object.keys(r.data).filter(k => k !== "_meta").join(", "));
+    else badge = el("span", { class: "badge ok" }, "ziet alles");
+    const pre = el("pre", { class: "json" });
+    if (r.ok) renderJson(pre, r.data);
+    views.append(el("div", { class: "view" }, el("div", {}, el("strong", {}, p.label)), el("div", { style: "margin:4px 0" }, badge), r.ok ? el("details", {}, el("summary", {}, "stand"), pre) : null));
+  }
+}
+
+// ---------- events ----------
+function stopEvents() { if (state.stream) { state.stream.close(); state.stream = null; } setStatus("ev-status", "gestopt"); }
+async function connectEvents() {
+  if (state.stream) state.stream.close();
+  const t = await api("POST", "/events/tickets");
+  if (!t.ok) { setStatus("ev-status", problemText(t), "bad"); return; }
+  const params = new URLSearchParams({ ticket: t.data.ticket });
+  if ($("ev-type").value.trim()) params.set("type", $("ev-type").value.trim());
+  if ($("ev-subject").value.trim()) params.set("subject", $("ev-subject").value.trim());
+  const last = state.events.length ? state.events[state.events.length - 1].sequence : null;
+  if (last) params.set("after", last); else if ($("ev-from-start").checked) params.set("after", "0");
+  const es = new EventSource("/events?" + params.toString());
+  state.stream = es;
+  es.onopen = () => setStatus("ev-status", "verbonden als " + ($("persona").selectedOptions[0] ? $("persona").selectedOptions[0].textContent : "token"), "ok");
+  es.onmessage = (m) => { try { addEvent(JSON.parse(m.data)); } catch (e) {} };
+  // EventSource reconnects with Last-Event-ID, but our ticket is single use: get a new one.
+  es.onerror = () => { if (state.stream === es) { es.close(); setStatus("ev-status", "verbinding weg, opnieuw..."); setTimeout(() => { if (state.stream === es) connectEvents(); }, 1500); } };
+}
+function addEvent(ev) {
+  state.events.push(ev);
+  const tr = el("tr", { class: "click", onclick: () => renderJson($("ev-detail"), ev) },
+    el("td", { class: "muted" }, ev.sequence), el("td", { class: "mono" }, ev.type), el("td", { class: "mono" }, ev.subject), el("td", {}, shortActor(ev.actor), ev.dataHidden ? " " : "", ev.dataHidden ? el("span", { class: "badge warn" }, "data verborgen") : null));
+  $("ev-rows").prepend(tr);
+  while ($("ev-rows").children.length > 500) $("ev-rows").lastChild.remove();
+}
+$("ev-connect").addEventListener("click", () => { state.events = []; $("ev-rows").textContent = ""; connectEvents(); });
+$("ev-stop").addEventListener("click", stopEvents);
+$("ev-clear").addEventListener("click", () => { $("ev-rows").textContent = ""; });
+
+// ---------- query ----------
+async function runQuery() {
+  let body;
+  try { body = JSON.parse($("q-body").value); } catch (e) { setStatus("q-status", "geen geldige JSON", "bad"); return; }
+  const r = await api("POST", "/query", body);
+  renderJson($("q-result"), r.data);
+  setStatus("q-status", r.ok ? r.data.results.length + " resultaten" : problemText(r), r.ok ? "ok" : "bad");
+  return r;
+}
+$("q-run").addEventListener("click", runQuery);
+$("q-follow").addEventListener("click", async () => {
+  const r = await runQuery();
+  if (!r || !r.ok) return;
+  let body; try { body = JSON.parse($("q-body").value); } catch (e) { return; }
+  // Snapshot plus stream: follow the events after feedCursor, refresh on each change of this type.
+  state.events = []; $("ev-rows").textContent = "";
+  const t = await api("POST", "/events/tickets");
+  if (!t.ok) return;
+  if (state.qstream) state.qstream.close();
+  const es = new EventSource("/events?" + new URLSearchParams({ ticket: t.data.ticket, after: r.data.feedCursor }));
+  state.qstream = es;
+  es.onmessage = () => runQuery();
+  setStatus("q-status", "volgt live vanaf " + r.data.feedCursor, "ok");
+});
+
+// ---------- schrijven ----------
+function exampleFor(schema, name) {
+  if (!schema || typeof schema !== "object") return null;
+  if (schema.enum) return schema.enum[0];
+  if (schema.type === "object" || schema.properties) {
+    const out = {};
+    for (const [k, v] of Object.entries(schema.properties || {})) out[k] = exampleFor(v, k);
+    return out;
+  }
+  if (schema.type === "array") return [];
+  if (schema.type === "boolean") return false;
+  if (schema.type === "number" || schema.type === "integer") return 0;
+  if (name === "partij") return state.persona ? state.persona.id : "https://id.example.nl/iemand";
+  if (schema.format === "uri") return "https://example.nl/";
+  return "";
+}
+function newSubject() { $("w-subject").value = "urn:uuid:" + (crypto.randomUUID ? crypto.randomUUID() : Date.now()); }
+function fillWrite() {
+  const v = $("w-type").value;
+  if (v === "json.commit") {
+    const type = state.types[0] ? state.types[0].name : "type";
+    $("w-data").value = JSON.stringify({ resourceId: $("w-subject").value || "urn:uuid:...", type, resourceData: {} }, null, 2);
+    return;
+  }
+  const def = state.eventTypes.find(e => e.name === v);
+  $("w-data").value = JSON.stringify(def ? exampleFor(def.def.dataschema, "") || {} : {}, null, 2);
+}
+$("w-type").addEventListener("change", fillWrite);
+$("w-new").addEventListener("click", () => { newSubject(); if ($("w-type").value === "json.commit") fillWrite(); });
+$("w-send").addEventListener("click", async () => {
+  let data;
+  try { data = JSON.parse($("w-data").value); } catch (e) { renderJson($("w-result"), { fout: "data is geen geldige JSON" }); return; }
+  const type = $("w-type").value;
+  const subject = type === "json.commit" ? (data.resourceId || $("w-subject").value) : $("w-subject").value;
+  const ev = { specversion: "1.0", id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()), source: "urn:openevents:ui", type, subject, time: new Date().toISOString(), data };
+  if ($("w-prev").value.trim()) { if (type === "json.commit") data.previousCommit = $("w-prev").value.trim(); else ev.previouscommit = $("w-prev").value.trim(); }
+  const r = await api("POST", "/events", ev);
+  renderJson($("w-sent"), ev);
+  renderJson($("w-result"), { status: r.status, body: r.data });
+  if (r.ok) { $("w-prev").value = r.data.events[r.data.events.length - 1].id; zoek(); }
+});
+
+// ---------- profielen ----------
+async function loadProfiles() {
+  const r = await api("GET", "/profiles");
+  state.profiles = [];
+  state.types = []; state.eventTypes = [];
+  for (const p of r.data.profiles) {
+    const full = await api("GET", "/profiles/" + encodeURIComponent(p.id));
+    state.profiles.push(full.data);
+    for (const [name, def] of Object.entries(full.data.types || {})) state.types.push({ name, def, profile: p.id });
+    for (const [name, def] of Object.entries(full.data.events || {})) state.eventTypes.push({ name, def, profile: p.id });
+  }
+  // Profiles with personas (the richer examples) first.
+  const rank = (name) => { const t = state.types.find(x => x.name === name); const p = state.profiles.find(x => x.id === t.profile); return p && p.personas ? 0 : 1; };
+  state.types.sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name));
+  $("p-rows").textContent = "";
+  for (const p of state.profiles) {
+    $("p-rows").append(el("tr", { class: "click", onclick: () => renderJson($("p-detail"), p) },
+      el("td", { class: "mono" }, p.id), el("td", { class: "muted" }, p.version || ""), el("td", {}, p.title || "")));
+  }
+  $("stand-type").textContent = "";
+  for (const t of state.types) $("stand-type").append(el("option", { value: t.name }, t.name));
+  const savedType = store("type");
+  if (savedType && state.types.some(t => t.name === savedType)) $("stand-type").value = savedType;
+  $("w-type").textContent = "";
+  for (const e of state.eventTypes) $("w-type").append(el("option", { value: e.name }, e.name));
+  $("w-type").append(el("option", { value: "json.commit" }, "json.commit"));
+  if (state.types[0]) $("q-body").value = JSON.stringify({ type: state.types[0].name, filter: "", fields: [], pageSize: 20 }, null, 2).replace('"fields": []', '"fields": null');
+}
+
+async function init() {
+  const c = await api("GET", "/ui/config", undefined, "");
+  state.config = c.data;
+  state.personas = c.data.personas || [];
+  if (state.personas.length) {
+    for (const p of state.personas) $("persona").append(el("option", { value: p.id }, p.label));
+    const saved = store("persona");
+    if (saved && state.personas.some(p => p.id === saved)) $("persona").value = saved;
+    state.persona = state.personas.find(p => p.id === $("persona").value);
+  } else {
+    $("as-persona").classList.add("hidden");
+    $("as-token").classList.remove("hidden");
+    $("token").value = store("token") || "";
+  }
+  $("w-as").textContent = state.persona ? state.persona.label.split(" (")[0] : "token";
+  await loadProfiles();
+  newSubject(); fillWrite();
+  const tab = store("tab");
+  if (tab) { const b = document.querySelector('#tabs button[data-tab="' + tab + '"]'); if (b) b.click(); }
+  zoek();
+}
+init();
+</script>
+</body>
+</html>
