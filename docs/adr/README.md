@@ -9,3 +9,4 @@
 | [0005](0005-wissen-met-crypto-shredding.md) | Wissen met crypto-shredding per onderwerp | Voorgesteld |
 | [0006](0006-filtertaal-cql2.md) | Filtertaal is CQL2 met een begrensd profiel | Voorgesteld |
 | [0007](0007-modules-in-wasm.md) | Domeinlogica in WASM-modules naast het register | Voorgesteld |
+| [0008](0008-events-zijn-commits.md) | Events zijn commits, het type benoemt de handeling | Aangenomen |
