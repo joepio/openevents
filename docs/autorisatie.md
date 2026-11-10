@@ -1,74 +1,79 @@
 # Autorisatie
 
-## Uitgangspunten
+**Autorisatie is een query.** Je mag zien wat een filter over jou oplevert. Er is geen aparte beslisser, geen aparte beleidstaal en geen beslissing per rij. Het register gebruikt voor rechten dezelfde filtertaal en dezelfde engine als voor [`/query`](query.md).
 
-1. **Het onderwerp is de eenheid.** Rechten hangen aan een onderwerp (een gesprek, een zaakspiegel), niet aan losse events.
-2. **Twee bronnen van rechten.** Een lijst per onderwerp (wie doet mee) en regels bij een externe beslisser (rol, zaaktype, vertrouwelijkheid).
-3. **Autorisatie is een filter.** Voor lezen en bevragen levert de beslissing geen ja of nee per rij op, maar een filter en een lijst toegestane velden. Dat filter gaat met AND in de geparste query (lab issue #51).
-4. **Vóór het pagineren.** Rechten worden via een index toegepast, zodat tellingen, offsets en cursors niets lekken.
+In de gangbare termen is het een mix van ABAC (regels op eigenschappen) en ReBAC (regels die een relatie naar jou volgen, zoals Google Zanzibar). Het verschil met klassieke ABAC (XACML, OPA) is dat de relaties als data in het register zelf staan, en dat een regel een filter is. Daardoor draait hij als query, in plaats van dat er per rij een beslissing wordt gevraagd.
 
-## Rechten per onderwerp
+## Regels in het profiel
 
-Elk onderwerp heeft een ACL met de rechten `read`, `append` en `write`:
+Per type staan in het profiel een leesregel, een schrijfregel en eventueel velden per rol:
 
-| Recht | Betekent |
+```yaml
+gesprek:
+  read:
+    any:
+      - { deelnames.partij: $actor }                       # ik doe mee
+      - { aanleiding.zaak.zaaktype.team.leden: $actor }    # mijn team behandelt dit zaaktype
+  write:
+    any:
+      - { deelnames: { all: [ { partij: $actor }, { rol: { in: [curator, bewindvoerder, behandelaar] } } ] } }
+      - { aanleiding.zaak.zaaktype.team.leden: $actor }
+  append:
+    { deelnames.partij: $actor }
+  fields:
+    default: all
+    "$actor.rol = kcc": [onderwerp, status, laatsteBijdrage.tijd]
+```
+
+- `$actor` is de identiteit uit het token (een URI van een persoon, medewerker of systeem). `$actor.<claim>` is een claim uit het token, zoals `rol`.
+- `read` bepaalt welke onderwerpen je ziet: in query's, in views, op de stroom en in de tijdlijn.
+- `append` bepaalt of je events mag toevoegen van types die het profiel als "toevoegen" markeert (zoals `bijdrage.toegevoegd`).
+- `write` bepaalt of je alle types mag schrijven (zoals `gesprek.afgesloten` of `deelname.toegevoegd`).
+- `fields` bepaalt welke velden je ziet. Zonder regel zie je alle velden van onderwerpen die je mag lezen.
+
+## Rechten zijn relaties, en relaties zijn data
+
+De kracht zit in de paden. Teams, zaaktypen en lidmaatschappen zijn gewone onderwerpen in het register, met een eigen klein profiel (`nl.vng.organisatie`): een team heeft `leden`, een zaaktype verwijst naar een `team`. De leesregel loopt via een pad naar `$actor`.
+
+Zo zijn alle gevallen uit MijnGesprekken één regel:
+
+| Wie | Waarom die het ziet |
 |---|---|
-| `read` | events en projectie lezen, onderwerp verschijnt in query's |
-| `append` | nieuwe events toevoegen van types die het profiel als "toevoegen" markeert (bijvoorbeeld `bijdrage.toegevoegd`) |
-| `write` | alle types, ook wijzigen van de stand (bijvoorbeeld afsluiten) |
+| inwoner | is deelnemer (`deelnames.partij`) |
+| curator, bewindvoerder | is deelnemer met die rol, en mag daarom ook schrijven |
+| behandelaar | zit in het team van het zaaktype van de zaak |
+| KCC-medewerker | zit in het KCC-team, ziet alleen onderwerp en status (`fields`) |
 
-De ACL wordt bijgehouden door de projectieregels van het profiel. Bij Gesprekken leveren de deelnames de ACL: inwoner `read` + `append`, curator `read` + `write`, bewindvoerder `read` + `write`, behandelaar `write`. Zo is de testcase van Vincent (curator lezen en schrijven, inwoner lezen; bij bewind beiden) een regel in het profiel en geen code.
+Van buiten komt alleen de identiteit. Wie lid is van welk team, staat in het register, en wijzigt via events zoals alles. Een gemeente die dat al in een ander systeem bijhoudt (een IAM of FTV), laat dat systeem die events publiceren.
 
-Een ACL-regel kan naar een agent wijzen of naar een groep (bijvoorbeeld "team Wmo"). Groepslidmaatschap komt uit het token of uit een groepenregister, niet uit het register zelf.
-
-## Regels via AuthZEN
-
-Voor medewerkers werkt een lijst per onderwerp niet: zij zien wat hun rol en zaaktypen toestaan. Daarvoor vraagt het register een externe beslisser volgens [AuthZEN](https://openid.net/wg/authzen/):
-
-```json
-POST /access/v1/evaluation
-{
-  "subject":  { "type": "user", "id": "behandelaar-12", "properties": { "roles": ["wmo-consulent"] } },
-  "action":   { "name": "query" },
-  "resource": { "type": "nl.vng.gesprekken.gesprek" },
-  "context":  { "register": "gesprekken.gemeente.nl" }
-}
-```
-
-Antwoord, met het filter en de velden in `context` (voorstel, zie lab issue #51):
-
-```json
-{
-  "decision": true,
-  "context": {
-    "filter": { "path": ["aanleiding", "zaak"], "filter": { "in": { "zaaktype": ["https://.../zaaktypen/wmo-1", "https://.../zaaktypen/wmo-2"] } } },
-    "fields": { "exclude": ["deelnames.partij.bsn"] }
-  }
-}
-```
-
-Het register cachet zo'n beslissing per agent en type, zo kort als de beslisser opgeeft.
+Vertegenwoordiging werkt hetzelfde. Een gemachtigde staat als deelname met rol `gemachtigde` in het gesprek, of het token draagt zowel de vertegenwoordigde als de gemachtigde (`sub` en `act.sub` uit RFC 8693), en de regel kijkt naar beide.
 
 ## Hoe het in de engine werkt
 
-1. De query wordt geparst en gevalideerd tegen het profiel.
-2. Het register haalt de beslissing op (ACL-tak en, als het beleid dat zegt, AuthZEN-tak).
-3. De engine bouwt: `queryFilter AND (aclFilter OR beslisserFilter)`.
-4. De ACL-tak loopt via `idx_readable`: per agent of groep de onderwerpen die leesbaar zijn. Die index wordt in dezelfde transactie bijgewerkt als de ACL.
-5. De velden worden gemaskeerd in de representatie, in elke `include` en op de stroom.
+1. De query van de client wordt geparst. Variabelen zijn daar niet toegestaan.
+2. De leesregel van het type wordt geparst bij het registreren van het profiel, en bij elke query ingevuld met `$actor`.
+3. De engine voert `filter van de client AND leesregel` uit, als één boom, met dezelfde indexen en grenzen. Dat gebeurt vóór paginering, dus tellingen, offsets en cursors lekken niets.
+4. De veldregel bepaalt de representatie, ook van elke `include`. Een verborgen veld ziet eruit als een veld zonder waarde.
+5. Filteren, sorteren en zoeken op een veld dat je niet mag zien, geeft dezelfde fout als een onbekend veld.
 
-Geen stap plakt tekst aan een query. Het filter van de beslisser wordt geparst met dezelfde parser als die van de client, met dezelfde grenzen.
+Er wordt nooit tekst aan een query geplakt. Een regel kan niets uitdrukken wat de query-taal niet kan, en valt dus onder dezelfde grenzen.
+
+**Uitlegbaar:** "waarom zie ik dit gesprek?" is een vraag die het register kan beantwoorden door de takken van de regel apart te draaien. Dat is ook de basis voor logging volgens de standaard Logboek Dataverwerkingen.
 
 ## Op de stroom
 
-Een SSE-verbinding krijgt bij het openen dezelfde beslissing. Elk event wordt tegen `idx_readable` of het beslisserfilter gehouden voordat het de deur uitgaat, en velden worden gemaskeerd. Verandert de ACL van een onderwerp (iemand wordt uit een gesprek gehaald), dan krijgt de verbinding van die agent vanaf dat moment niets meer van dat onderwerp, en een `subject.unmatched`-melding.
+Een SSE-verbinding gebruikt dezelfde leesregel. Het register houdt per open stroom bij welke onderwerpen erin vallen. Verandert dat, door een nieuw event op het onderwerp of doordat jij uit een team gaat, dan stuurt het `subject.matched` of `subject.unmatched`, en vanaf dat moment komt er wel of niets meer van dat onderwerp.
 
-Een verlopen token sluit de stroom niet hard af: de server stuurt een `auth.expiring`-melding, de client haalt een nieuw ticket en gaat verder met `Last-Event-ID`.
+Een verlopen token sluit de stroom niet hard af. De server stuurt `auth.expiring`, de client haalt een nieuw ticket en gaat verder met `Last-Event-ID`.
 
 ## Schrijven
 
-Bij schrijven is de vraag ja of nee: mag deze agent dit type op dit onderwerp schrijven? Eerst de ACL (`append` of `write`), daarna, als het beleid dat zegt, de beslisser. Een weigering is altijd één 403 zonder details, zodat je niet kunt aftasten welke onderwerpen bestaan (zoals in ZaakChat #28).
+Een event mag als het onderwerp vóór het event door je `append`- of `write`-regel komt. Bij een nieuw onderwerp telt de stand ná het event: je kunt geen gesprek starten waarin je zelf niet zou mogen schrijven. Een weigering is altijd één 403 zonder details, zodat je niet kunt aftasten welke onderwerpen bestaan (zoals in ZaakChat #28).
 
-## Producenten
+Systemen zoals Open Zaak of OneGround zijn ook een `$actor`. Het profiel geeft hun rechten per `source`: OneGround mag `nl.vng.gesprekken.*` schrijven met `source` gelijk aan zijn eigen URI. Alleen de bron die een onderwerp heeft gemaakt, mag het wissen (lab ADR-0004).
 
-Systemen zoals Open Zaak of OneGround schrijven met een eigen token. Hun recht is per profiel en per `source`: OneGround mag `nl.vng.gesprekken.*` schrijven met `source` gelijk aan zijn eigen URI, en niets anders. Alleen de bron die een onderwerp heeft gemaakt, mag het wissen (lab ADR-0004).
+## Centraal beheer
+
+Regels zijn data. Ze staan in het profiel en zijn te lezen via `GET /profiles`. Als VNG, de G4 of een gemeente regels centraal wil beheren (zoals met FTV), kan een beheertool ze daar ophalen, tonen en via `PUT /profiles/{id}` uitrollen. Het register hoeft daarvoor niets extra's te kunnen.
+
+Een externe beslisser (AuthZEN, OPA) is daarom niet nodig. Wil een gemeente toch voor bepaalde schrijfacties een centrale ja/nee-vraag stellen, dan kan dat later als optionele haak in het schrijfpad. Voor lezen en bevragen nooit, want daar breekt het de eigenschappen hierboven.

@@ -22,7 +22,7 @@ Het idee is dat spec en code gelijk oplopen: elke wijziging in het lab heeft een
 | `patterns/error-responses` v0.0.1 | op `main` | `problem+json` |
 | `patterns/federated-auth` next | op `main` | tokens van buiten, geen eigen login |
 | issue #16 patroon voor queryen | open | beantwoord door [query.md](query.md): POST nu, `QUERY` later, live via SSE |
-| issue #51 autorisatie als filter | open | uitgewerkt in [autorisatie.md](autorisatie.md) |
+| issue #51 autorisatie | open | [autorisatie.md](autorisatie.md): autorisatie als query, zonder externe beslisser; vervangt het `context`-voorstel van 3 november |
 
 ## Voorgestelde wijzigingen in `next`
 
@@ -48,7 +48,7 @@ Deze lijst is het werkpakket voor het lab. Elke regel wordt een commit in een la
 2. **`fields` en `include`** voor representaties, met de grenzen uit [query.md](query.md).
 3. **Benoemde views:** `GET`/`POST /views/{naam}`.
 4. **`feedCursor`** in elke respons, met de semantiek uit sync-feed.
-5. **Autorisatie als filter:** de regel dat een implementatie het filter van de beslisser in de geparste boom zet, vóór paginering, en tellingen alleen binnen rechten berekent.
+5. **Autorisatie is een query:** regels in dezelfde filtertaal met `$actor`, altijd met AND bij de query van de client, vóór paginering; tellingen alleen binnen rechten; verborgen velden zien eruit als afwezige. Dit wordt ook het voorstel voor lab issue #51.
 6. **Kostengrens:** `problem+json` type `query-too-expensive`.
 
 ### Nieuwe ADR

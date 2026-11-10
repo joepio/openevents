@@ -51,8 +51,6 @@ Tabellen (prefixes) in de store:
 | `head` | `subject` | laatste commit-id (voor `previousCommit`) |
 | `idx_field` | profiel + veld + waarde + `subject` | leeg |
 | `idx_ref` | doel + veld + bron | leeg (omgekeerde verwijzingen, voor paden) |
-| `acl` | `subject` + recht + agent | leeg |
-| `idx_readable` | agent of groep + `subject` | leeg (rechten als index, zie [autorisatie](autorisatie.md)) |
 | `keys` | `subject` | sleutel voor die onderwerp-inhoud |
 | `profiles` | profiel-id + versie | profieldefinitie |
 
@@ -64,7 +62,7 @@ Alle schrijfacties voor één transactie (log, projectie, indexen, head, idempot
 2. **Parsen.** CloudEvent of JSON Commit-envelop (`type: json.commit.transaction`).
 3. **Idempotentie.** Bestaat aanroeper + `source` + `id` al, dan komt het eerdere resultaat terug.
 4. **Validatie.** Het `type` moet bij een geregistreerd profiel horen; `data` wordt gevalideerd tegen het `dataschema` (eis F11).
-5. **Beleid.** Mag deze agent dit type op dit onderwerp schrijven? Eerst de ACL van het onderwerp, daarna eventueel de externe beslisser.
+5. **Beleid.** Komt het onderwerp door de `append`- of `write`-regel van het profiel voor deze agent? Dat is een query op dezelfde engine (zie [autorisatie](autorisatie.md)).
 6. **Concurrency.** Klopt `previousCommit` met `head`? Zo niet, 412.
 7. **Projectie.** De projectieregels van het profiel berekenen de nieuwe stand; ook de regels die afgeleide events maken (bijvoorbeeld een automatisch antwoord) draaien hier, binnen dezelfde transactie.
 8. **Opslaan.** Eén batch.
@@ -74,7 +72,7 @@ Neveneffecten buiten het register (een klantcontact in Open Klant, een e-mail) z
 
 ## Leespad
 
-- `GET /events` (SSE): filter (dezelfde taal als `/query`), cursor via `Last-Event-ID`, per event een rechtencheck tegen `idx_readable` en veldmaskering. Het token gaat in een header; voor browsers die geen headers bij `EventSource` kunnen meesturen, komt een kortlevend stream-ticket via `POST /events/tickets`.
+- `GET /events` (SSE): filter (dezelfde taal als `/query`), cursor via `Last-Event-ID`, per event de leesregel van het profiel en de veldregel. Het token gaat in een header; voor browsers die geen headers bij `EventSource` kunnen meesturen, komt een kortlevend stream-ticket via `POST /events/tickets`.
 - `GET /events?format=json` (of `Accept: application/json`): dezelfde selectie als pagina's.
 - `GET /subjects/{subject}/events`: de tijdlijn van één onderwerp.
 - `POST /query`: zie [query-engine](query.md).
@@ -104,6 +102,6 @@ Neveneffecten buiten het register (een klantcontact in Open Klant, een e-mail) z
 | SSE met snapshot plus deltas (`get_or_stream_events`) | over te nemen, met `Last-Event-ID` en het token uit de URL |
 | `resource_aggregates`, `resource_heads` | wordt `projection` en `head` |
 | Tantivy voor zoeken | optioneel, alleen voor vrije tekst; filters en paden gaan via eigen indexen |
-| `involved`-autorisatie, herkenning van issues aan velden | vervangen door ACL per onderwerp en profielen |
+| `involved`-autorisatie, herkenning van issues aan velden | vervangen door lees- en schrijfregels in het profiel |
 | Rust-types als schema's | vervangen door profielen tijdens runtime |
 | e-mail, push, frontend | worden aparte consumers; ZaakChat wordt de eerste app op OpenEvents |

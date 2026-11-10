@@ -21,6 +21,6 @@ Zie [query.md](../query.md) voor de details.
 
 ## Gevolgen
 
-- Eén taal voor query, abonnement en beleid (het filter van de beslisser).
+- Eén taal voor query, abonnement en autorisatie (zie ADR-0004).
 - Lab krijgt een ADR-0008 die ADR-0003 aanvult voor registers (zie [lab-aansluiting](../lab-aansluiting.md)).
 - Live query's met paden zijn in de eerste versie benaderend (meldingen `subject.matched`/`unmatched`, client vraagt opnieuw).

@@ -12,7 +12,7 @@ Elke fase eindigt met iets dat te laten zien is, en met de bijbehorende wijzigin
 - Rust-crate `openevents-core`: KV-trait met een embedded implementatie, log, idempotentie, JSON Commit (overgenomen uit ZaakChat `commits.rs`), projectie met declaratieve regels, `head` en 412.
 - `openevents-server`: `POST /events`, `GET /events` (SSE met `Last-Event-ID` en tickets), `GET /subjects/{subject}` en de tijdlijn.
 - Profielen tijdens runtime met JSON Schema-validatie.
-- ACL per onderwerp met `idx_readable`; OIDC-tokens.
+- Lees- en schrijfregels per type (eerst zonder paden, alleen `deelnames.partij: $actor`); OIDC-tokens.
 - Conformance-tests in een aparte map, zodat ze ook tegen andere implementaties kunnen draaien.
 
 **Demo:** de Gesprekken API (OneGround-fork) publiceert naar OpenEvents; de medewerkerconsole leest via SSE. Op DemoStack naast de MijnGesprekken-demo.
@@ -23,13 +23,13 @@ Elke fase eindigt met iets dat te laten zien is, en met de bijbehorende wijzigin
 - Indexen op velden en verwijzingen; kostenschatting en grenzen.
 - Views.
 - `feedCursor` en live volgen met hetzelfde filter.
-- AuthZEN-tak met filter en veldenlijst.
+- Regels met paden (`zaaktype.team.leden`) en velden per rol; organisatieprofiel met teams en leden.
 
 **Demo:** de werkvoorraad van een Wmo-consulent ("gesprekken bij mijn zaaktypen, met de laatste bijdrage en de zaak erbij") in één request, en "mijn open gesprekken" voor de inwoner, beide live.
 
 ## Fase 3: Gesprekken als profiel (2 weken)
 
-- Profiel `nl.vng.gesprekken` met projectie, ACL-regels, automatisch antwoord en automatisch sluiten.
+- Profiel `nl.vng.gesprekken` met projectie, lees- en schrijfregels, automatisch antwoord en automatisch sluiten.
 - Dunne REST-laag die het Gesprekken-contract (lab PR #47) op events vertaalt.
 - Consumer voor klantcontact in Open Klant bij afsluiten.
 

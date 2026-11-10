@@ -24,7 +24,7 @@ eventTypes:
   nl.vng.gesprekken.deelname.toegevoegd:   { dataschema: ".../deelname.json",          right: write }
   nl.vng.gesprekken.gesprek.afgesloten:    { dataschema: ".../afgesloten.json",        right: append }
 projection: ./projecties/gesprek.wasm      # of een declaratieve reducer, zie hieronder
-acl: ./regels/gesprek-acl.yaml
+rules: ./regels/gesprek.yaml          # read, append, write, fields; zie autorisatie.md
 views: [mijn-open-gesprekken, werkvoorraad-gesprekken]
 policies: [gesprekken-inwoner, gesprekken-medewerker]
 ```
@@ -53,7 +53,7 @@ Het eerste echte profiel wordt MijnGesprekken, omdat daar een werkende PoC ligt 
 | `POST /gesprekken`, `POST /gesprekken/{id}/bijdragen` | events `gesprek.gestart`, `bijdrage.toegevoegd` |
 | `GET /gesprekken?...` | view `werkvoorraad-gesprekken` of `/query` |
 | `GET /events` (SSE) | `GET /events` met filter op het profiel |
-| deelnames en rechten | projectie plus ACL-regels |
+| deelnames en rechten | projectie plus lees- en schrijfregels over `deelnames.partij` en `zaaktype.team.leden` |
 | gelezen | event `bijdrage.gelezen`, projectieveld `ongelezen` per deelnemer |
 | automatisch antwoord | afgeleid event in de projectieregel |
 | automatisch sluiten na 3 dagen | tijdsgestuurde regel |

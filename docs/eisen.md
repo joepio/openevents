@@ -25,7 +25,7 @@ Eisen staan hier als eigenschappen, niet als techniek. Een techniek wordt pas ge
 | # | Eis | Klaar als |
 |---|---|---|
 | A1 | Rechten per onderwerp | Per onderwerp is vast te leggen wie mag lezen, toevoegen en schrijven (bijvoorbeeld curator: lezen en schrijven; inwoner: lezen) |
-| A2 | Rechten op basis van regels | Een externe beslisser kan op rol, zaaktype of vertrouwelijkheid beslissen, zonder dat rechten per onderwerp worden uitgeschreven |
+| A2 | Rechten op basis van relaties en eigenschappen | Een medewerker ziet onderwerpen via team, zaaktype of rol, zonder dat rechten per onderwerp worden uitgeschreven; een teamwissel is één wijziging |
 | A3 | Geen lekken via tellingen | Totalen, offsets en cursors verraden niets over onderwerpen die je niet mag zien |
 | A4 | Velden afschermen | Velden waarvoor je geen recht hebt, staan niet in de representatie, ook niet in meegenomen resources of op de stroom |
 | A5 | Geen injectie | Autorisatie werkt op de geparste query, nooit door tekst aan een query te plakken |
@@ -51,5 +51,5 @@ Eisen staan hier als eigenschappen, niet als techniek. Een techniek wordt pas ge
 | K4 | Snelheid | Query's op een index binnen 50 ms bij 10 miljoen events op één node; meten met een benchmark in het repo |
 | K5 | Begrensde kosten | Elke query heeft een kostengrens (diepte, aantal waarden, resultaatgrootte); te dure query's krijgen een fout in plaats van een trage server |
 | K6 | Eenvoudig te hosten | Eén binary of container, zonder verplichte externe database |
-| K7 | Open | Open source, open standaarden (CloudEvents, JSON Schema, OpenAPI, AsyncAPI, AuthZEN) |
+| K7 | Open | Open source, open standaarden (CloudEvents, JSON Schema, OpenAPI, AsyncAPI, OIDC) |
 | K8 | Conformance | Een testset die elke andere implementatie van hetzelfde contract kan draaien |
