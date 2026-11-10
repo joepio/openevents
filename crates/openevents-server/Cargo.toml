@@ -1,0 +1,33 @@
+[package]
+name = "openevents-server"
+description = "HTTP server for OpenEvents: POST/GET /events (SSE), subjects, profiles, query"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "openevents"
+path = "src/main.rs"
+
+[dependencies]
+openevents-core = { path = "../openevents-core" }
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+tokio.workspace = true
+axum = "0.8"
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures-util = "0.3"
+async-stream = "0.3"
+jsonwebtoken = { version = "9", default-features = false }
+dashmap = "6"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+tempfile = "3"

@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = ["crates/openevents-core", "crates/openevents-server"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "EUPL-1.2"
+repository = "https://github.com/joepio/openevents"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v7"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }

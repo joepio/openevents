@@ -16,7 +16,7 @@ gesprek:
   append: >
     deelnames.partij = actor()
   write: >
-    (deelnames.partij = actor() AND deelnames.rol IN ('curator', 'bewindvoerder', 'behandelaar'))
+    rollen.curator = actor() OR rollen.bewindvoerder = actor() OR rollen.behandelaar = actor()
     OR aanleiding.zaak.zaaktype.team.leden = actor()
   fields:
     - when: "actor('rol') = 'kcc'"
@@ -29,6 +29,7 @@ De regels zijn [CQL2](query.md#filtertaal)-tekst, dezelfde taal als een query. Z
 - `read` bepaalt welke onderwerpen je ziet: in query's, in views, op de stroom en in de tijdlijn.
 - `append` bepaalt of je events mag toevoegen van types die het profiel als "toevoegen" markeert (zoals `bijdrage.toegevoegd`).
 - `write` bepaalt of je alle types mag schrijven (zoals `gesprek.afgesloten` of `deelname.toegevoegd`).
+- Een pad door een lijst matcht als *een* element matcht, per vergelijking apart. `deelnames.partij = actor() AND deelnames.rol = 'curator'` kan dus waar zijn met de partij uit de ene deelname en de rol uit de andere. Daarom houdt de projectie een veld `rollen` bij (`rollen.curator` is de lijst partijen met die rol), en kijkt de schrijfregel daarnaar. Zie `examples/profiles/gesprekken.json`.
 - `fields` bepaalt welke velden je ziet. Zonder regel zie je alle velden van onderwerpen die je mag lezen.
 
 ## Rechten zijn relaties, en relaties zijn data

@@ -1,0 +1,94 @@
+{
+  "id": "nl.vng.gesprekken",
+  "version": "0.1.0",
+  "title": "MijnGesprekken als profiel op OpenEvents",
+  "types": {
+    "nl.vng.gesprekken.gesprek": {
+      "allowCommits": false,
+      "queryable": ["status", "onderwerp", "team", "aanleiding.zaak", "deelnames.partij", "laatsteBijdrage.tijd"],
+      "schema": {
+        "type": "object",
+        "required": ["onderwerp", "status", "deelnames"],
+        "properties": {
+          "onderwerp": { "type": "string", "minLength": 1 },
+          "status": { "enum": ["open", "afgesloten"] },
+          "team": { "type": "string" },
+          "aanleiding": { "type": "object", "properties": { "zaak": { "type": "string", "format": "uri" } } },
+          "deelnames": { "type": "array", "items": { "type": "object", "required": ["partij", "rol"] } }
+        }
+      },
+      "rules": {
+        "read": "deelnames.partij = actor() OR team = actor('team')",
+        "create": "deelnames.partij = actor() OR team = actor('team')",
+        "append": "deelnames.partij = actor() AND status = 'open'",
+        "write": "rollen.curator = actor() OR rollen.bewindvoerder = actor() OR rollen.behandelaar = actor() OR team = actor('team')"
+      }
+    }
+  },
+  "events": {
+    "nl.vng.gesprekken.gesprek.gestart": {
+      "subjectType": "nl.vng.gesprekken.gesprek",
+      "creates": true,
+      "dataschema": {
+        "type": "object",
+        "required": ["onderwerp", "initiatiefnemer"],
+        "additionalProperties": false,
+        "properties": {
+          "onderwerp": { "type": "string", "minLength": 1 },
+          "team": { "type": "string" },
+          "aanleiding": { "type": "object", "properties": { "zaak": { "type": "string" } } },
+          "initiatiefnemer": {
+            "type": "object",
+            "required": ["partij", "rol"],
+            "properties": { "partij": { "type": "string" }, "rol": { "enum": ["inwoner", "curator", "bewindvoerder", "gemachtigde", "behandelaar"] } }
+          }
+        }
+      },
+      "projection": [
+        { "op": "set", "path": "onderwerp", "value": "$data.onderwerp" },
+        { "op": "set", "path": "team", "value": "$data.team" },
+        { "op": "set", "path": "aanleiding", "value": "$data.aanleiding" },
+        { "op": "set", "path": "status", "value": "open" },
+        { "op": "set", "path": "gestart", "value": "$time" },
+        { "op": "append", "path": "deelnames", "value": "$data.initiatiefnemer" },
+        { "op": "append", "path": "rollen.{$data.initiatiefnemer.rol}", "value": "$data.initiatiefnemer.partij" }
+      ]
+    },
+    "nl.vng.gesprekken.deelname.toegevoegd": {
+      "subjectType": "nl.vng.gesprekken.gesprek",
+      "right": "write",
+      "dataschema": {
+        "type": "object",
+        "required": ["partij", "rol"],
+        "properties": { "partij": { "type": "string" }, "rol": { "enum": ["inwoner", "curator", "bewindvoerder", "gemachtigde", "behandelaar"] } }
+      },
+      "projection": [
+        { "op": "append", "path": "deelnames", "value": "$data" },
+        { "op": "append", "path": "rollen.{$data.rol}", "value": "$data.partij" }
+      ]
+    },
+    "nl.vng.gesprekken.bijdrage.toegevoegd": {
+      "subjectType": "nl.vng.gesprekken.gesprek",
+      "right": "append",
+      "dataschema": {
+        "type": "object",
+        "required": ["tekst"],
+        "properties": { "tekst": { "type": "string", "minLength": 1 }, "automatisch": { "type": "boolean" } }
+      },
+      "projection": [
+        { "op": "append", "path": "bijdragen", "value": { "id": "$id", "tekst": "$data.tekst", "door": "$actor", "tijd": "$time", "automatisch": "$data.automatisch" } },
+        { "op": "set", "path": "laatsteBijdrage", "value": { "door": "$actor", "tijd": "$time" } },
+        { "op": "increment", "path": "aantalBijdragen" }
+      ]
+    },
+    "nl.vng.gesprekken.gesprek.afgesloten": {
+      "subjectType": "nl.vng.gesprekken.gesprek",
+      "right": "append",
+      "dataschema": { "type": "object", "properties": { "reden": { "type": "string" } } },
+      "projection": [
+        { "op": "set", "path": "status", "value": "afgesloten" },
+        { "op": "set", "path": "afgesloten", "value": { "door": "$actor", "tijd": "$time", "reden": "$data.reden" } }
+      ]
+    }
+  }
+}

@@ -2,7 +2,7 @@
 
 OpenEvents is een eventregister met een query-engine. Bronnen schrijven gebeurtenissen (CloudEvents) naar één plek. Clients volgen ze live via SSE en vragen de actuele stand op met één krachtige, geautoriseerde query.
 
-> **Status: ontwerp.** Er is nog geen code. Dit repo bevat eerst het ontwerp, zodat het ontwerp en de VNG API Lab-patterns gelijk kunnen oplopen.
+> **Status: fase 1 in aanbouw.** Er is een eerste werkende kern (zie [Draaien](#draaien)). Het ontwerp staat in [`docs/`](docs/) en loopt gelijk op met de VNG API Lab-patterns.
 
 ## Waarom
 
@@ -45,3 +45,55 @@ OpenEvents leent van twee bestaande projecten:
 - **Atomic Data / atomic-server:** schema's als data, een `KvStore`-trait, een index op verwijzingen, bewaakte query's.
 
 Zie [ADR-0001](docs/adr/0001-eigen-kern-in-rust.md) voor waarom het een eigen kern wordt en geen uitbreiding van een van beide.
+
+## Draaien
+
+```sh
+# lokaal, met demo-tokens en de voorbeeldprofielen
+OPENEVENTS_DEV_AUTH=true OPENEVENTS_ADMINS=urn:admin OPENEVENTS_PROFILES=examples/profiles \
+  cargo run -p openevents-server
+
+# tests
+cargo test
+```
+
+Of met Docker:
+
+```sh
+docker build -t openevents .
+docker run -p 8080:8080 -v openevents:/data \
+  -e OPENEVENTS_JWT_SECRET=... -e OPENEVENTS_ADMINS=urn:admin -e OPENEVENTS_PROFILES=/profiles openevents
+```
+
+| Variabele | Betekenis |
+|---|---|
+| `OPENEVENTS_DATA` | map voor de opslag (standaard `data`) |
+| `OPENEVENTS_ADDR` | adres (standaard `0.0.0.0:8080`) |
+| `OPENEVENTS_JWT_SECRET` | geheim voor HS256-tokens; `sub` is de actor, alle claims zijn beschikbaar in `actor('claim')` |
+| `OPENEVENTS_DEV_AUTH` | `true` staat `Bearer dev:<actor>\|claim=waarde` toe, alleen voor demo's en tests |
+| `OPENEVENTS_ADMINS` | actors (komma's) die profielen mogen registreren |
+| `OPENEVENTS_PROFILES` | map met profielen (`.json`) die bij het starten worden geïnstalleerd |
+
+Een gesprek starten en volgen:
+
+```sh
+T="Authorization: Bearer dev:https://id.example.nl/suzanne"
+curl -s localhost:8080/events -H "$T" -H 'content-type: application/json' -d '{
+  "specversion": "1.0", "id": "e1", "source": "urn:demo", "subject": "urn:uuid:g1",
+  "type": "nl.vng.gesprekken.gesprek.gestart",
+  "data": { "onderwerp": "Vraag", "initiatiefnemer": { "partij": "https://id.example.nl/suzanne", "rol": "inwoner" } } }'
+curl -N localhost:8080/events -H "$T" -H 'accept: text/event-stream' -H 'last-event-id: 0'
+curl -s localhost:8080/query -H "$T" -H 'content-type: application/json' \
+  -d '{ "type": "nl.vng.gesprekken.gesprek", "filter": "status = '"'"'open'"'"'" }'
+```
+
+### Wat er in fase 1 zit
+
+- KV-trait met redb (synchroon schrijven) en een in-memory variant
+- `POST /events`: CloudEvents van profieltypes, `json.commit` en `json.commit.transaction`; alles of niets, idempotent op `source` + `id`, `previousCommit` (of de extensie `previouscommit`) met 412
+- profielen tijdens runtime (`PUT /profiles/{id}`), JSON Schema voor `data` en voor de stand, declaratieve projectie (`set`, `merge`, `append`, `remove`, `increment`, paden met `{$data.x}`)
+- lees-, maak-, schrijf- en toevoegregels in CQL2-tekst of CQL2-JSON (`=`, `<>`, `<`, `<=`, `>`, `>=`, `IN`, `IS NULL`, `AND`, `OR`, `NOT`, `actor()`, `actor('claim')`)
+- `GET /events` als SSE (`Last-Event-ID`, tickets) of JSON, `GET /subjects/{subject}`, `GET /subjects/{subject}/events`
+- `POST /query` met filter, `fields`, paginering en `feedCursor`; nog zonder veldindexen (scant per type), zonder paden over verwijzingen en zonder `include`
+
+Nog niet: paden over verwijzingen, indexen, views, wissen, OIDC met JWKS, modules.

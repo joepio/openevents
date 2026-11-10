@@ -1,0 +1,20 @@
+[package]
+name = "openevents-core"
+description = "Event register core: log, projections, profiles, CQL2 rules"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+tokio.workspace = true
+redb = "2"
+jsonschema = { version = "0.26", default-features = false }
+
+[dev-dependencies]
+tempfile = "3"

@@ -9,6 +9,8 @@ Elke fase eindigt met iets dat te laten zien is, en met de bijbehorende wijzigin
 
 ## Fase 1: kern (2 tot 3 weken)
 
+**Stand 10 november 2026:** de eerste versie van de kern staat in `crates/` (zie de README, "Wat er in fase 1 zit"). Nog open in deze fase: OIDC met JWKS, de demo op DemoStack, conformance-tests als aparte set.
+
 - Rust-crate `openevents-core`: KV-trait met een embedded implementatie, log, idempotentie, JSON Commit (overgenomen uit ZaakChat `commits.rs`), projectie met declaratieve regels, `head` en 412.
 - `openevents-server`: `POST /events`, `GET /events` (SSE met `Last-Event-ID` en tickets), `GET /subjects/{subject}` en de tijdlijn.
 - Profielen tijdens runtime met JSON Schema-validatie.

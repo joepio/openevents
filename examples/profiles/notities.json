@@ -1,0 +1,25 @@
+{
+  "id": "nl.example.notities",
+  "version": "0.1.0",
+  "title": "Eenvoudig voorbeeld voor JSON Commit: notities met een eigenaar",
+  "types": {
+    "nl.example.notitie": {
+      "queryable": ["eigenaar", "label", "titel"],
+      "schema": {
+        "type": "object",
+        "required": ["titel", "eigenaar"],
+        "properties": {
+          "titel": { "type": "string" },
+          "tekst": { "type": "string" },
+          "eigenaar": { "type": "string" },
+          "lezers": { "type": "array", "items": { "type": "string" } },
+          "label": { "type": "string" }
+        }
+      },
+      "rules": {
+        "read": "eigenaar = actor() OR lezers = actor()",
+        "write": "eigenaar = actor()"
+      }
+    }
+  }
+}
