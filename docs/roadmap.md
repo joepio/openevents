@@ -46,6 +46,17 @@ Elke fase eindigt met iets dat te laten zien is, en met de bijbehorende wijzigin
 
 **Demo:** een bezwaar indienen in het portaal, de behandelaar ziet het in de werkvoorraad gesorteerd op termijn, verdagen en beslissen, alles live.
 
+## Op DemoStack
+
+OpenEvents komt als eigen onderdeel op DemoStack (`events.demostack.nl`), in `stacks/` van joepio/demostack, met dezelfde SSO (Keycloak) als de rest van de stack. ZaakChat wordt daar de voorbeeldapp: de React-frontend praat dan met OpenEvents in plaats van met zijn eigen backend, en laat zien wat `/query`, views, de stroom en de leesregels samen doen.
+
+| Stap | Wanneer |
+|---|---|
+| OpenEvents-container naast de MijnGesprekken-demo, Gesprekken API publiceert ernaar | einde fase 1 |
+| ZaakChat-frontend op OpenEvents (profiel `zaakchat`: zaken, berichten, taken) | fase 2, zodra `/query` en views er zijn |
+| Zaakspiegel uit Open Zaak via notificaties, zodat ZaakChat echte DemoStack-zaken toont | fase 2 |
+| Bezwaarmodule met het portaal en de medewerkerconsole | fase 3b |
+
 ## Fase 4: productierijp
 
 - Wissen met crypto-shredding en bewaartermijnen.
