@@ -27,7 +27,6 @@ Tijdens het fieldlab MijnGesprekken (10 november 2026) bleek er belangstelling v
 ## Documentatie
 
 - [Aansluiten als leverancier](docs/aansluiten.md): events posten, tokens, batch, OpenAPI, of via ZGW-notificaties
-
 - [Eisen](docs/eisen.md): wat het moet kunnen, als eigenschappen
 - [Architectuur](docs/architectuur.md): log, projecties, indexen, API
 - [Query-engine](docs/query.md): taal, paden, representaties, live
