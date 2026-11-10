@@ -20,7 +20,10 @@ use tower::ServiceExt;
 const AUTH: &str = "Bearer geheim-van-open-notificaties";
 const BEZWAAR: &str = "https://openzaak.demodam.nl/catalogi/api/v1/zaaktypen/bezwaar";
 
-async fn fake_open_zaak(fetches: Arc<AtomicUsize>) -> String {
+async fn fake_open_zaak(
+    fetches: Arc<AtomicUsize>,
+    afgesloten: Arc<std::sync::atomic::AtomicBool>,
+) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let b = base.clone();
@@ -29,6 +32,7 @@ async fn fake_open_zaak(fetches: Arc<AtomicUsize>) -> String {
         get(move |Path((resource, id)): Path<(String, String)>, headers: HeaderMap| {
             let b = b.clone();
             let fetches = fetches.clone();
+            let afgesloten = afgesloten.clone();
             async move {
                 // ZGW auth: a JWT signed with the shared secret.
                 let auth = headers.get("authorization").and_then(|h| h.to_str().ok()).unwrap_or("");
@@ -42,7 +46,8 @@ async fn fake_open_zaak(fetches: Arc<AtomicUsize>) -> String {
                     "zaken" => json!({
                         "url": url, "identificatie": "ZAAK-2026-0001", "bronorganisatie": "123456782",
                         "omschrijving": "Bezwaar tegen WOZ-beschikking", "zaaktype": BEZWAAR,
-                        "startdatum": "2026-11-10", "vertrouwelijkheidaanduiding": "vertrouwelijk"
+                        "startdatum": "2026-11-10", "vertrouwelijkheidaanduiding": "vertrouwelijk",
+                        "einddatum": if afgesloten.load(Ordering::SeqCst) { json!("2026-11-12") } else { Value::Null }
                     }),
                     "statussen" => json!({
                         "url": url, "zaak": zaak, "statustype": format!("{b}/catalogi/api/v1/statustypen/in-behandeling"),
@@ -124,7 +129,8 @@ fn notificatie(base: &str, resource: &str, path: &str, actie: &str) -> Value {
 #[tokio::test]
 async fn notificaties_become_a_zaakspiegel() {
     let fetches = Arc::new(AtomicUsize::new(0));
-    let base = fake_open_zaak(fetches.clone()).await;
+    let afgesloten = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let base = fake_open_zaak(fetches.clone(), afgesloten.clone()).await;
     let register = Arc::new(Register::open(Arc::new(MemoryStore::new())).unwrap());
     let app = app(register);
     let profile: Value =
@@ -213,6 +219,57 @@ async fn notificaties_become_a_zaakspiegel() {
     );
     assert_eq!(z["statussen"].as_array().unwrap().len(), 1);
     assert_eq!(z["rollen"]["initiator"][0], "999993653");
+
+    // An update carries only the change; an update without change stores nothing.
+    let mut upd = notificatie(&base, "zaak", "zaken/z1", "partial_update");
+    upd["aanmaakdatum"] = json!("2026-11-10T11:00:00Z");
+    let (s, _) = call(&app, "POST", "/notificaties", AUTH, Some(upd.clone())).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    afgesloten.store(true, Ordering::SeqCst);
+    upd["aanmaakdatum"] = json!("2026-11-12T09:00:00Z");
+    let (s, _) = call(&app, "POST", "/notificaties", AUTH, Some(upd)).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let (_, tl) = call(
+        &app,
+        "GET",
+        &format!("/subjects/{zaak}/events"),
+        "Bearer dev:urn:admin",
+        None,
+    )
+    .await;
+    let types: Vec<&str> = tl["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["type"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        types,
+        [
+            "nl.vng.zgw.zaken.zaak.create",
+            "nl.vng.zgw.zaken.status.create",
+            "nl.vng.zgw.zaken.rol.create",
+            "nl.vng.zgw.zaken.zaak.partial_update"
+        ],
+        "{tl}"
+    );
+    assert_eq!(
+        tl["events"][3]["data"]["patch"],
+        json!({ "einddatum": "2026-11-12" })
+    );
+    let (_, z) = call(
+        &app,
+        "GET",
+        &format!("/subjects/{zaak}"),
+        "Bearer dev:urn:admin",
+        None,
+    )
+    .await;
+    assert_eq!(z["einddatum"], "2026-11-12");
+    assert_eq!(
+        z["huidigeStatus"]["statustoelichting"],
+        "In behandeling genomen"
+    );
 
     // The initiator sees her zaak through the BSN in her token; someone else does not.
     let (s, _) = call(

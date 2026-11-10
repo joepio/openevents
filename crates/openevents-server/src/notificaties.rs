@@ -4,9 +4,15 @@
 //! - type `nl.vng.zgw.<kanaal>.<resource>.<actie>`, e.g. `nl.vng.zgw.zaken.status.create`.
 //!   Only types that a profile registers are stored; the rest is acknowledged and ignored,
 //!   so a profile decides what to mirror.
-//! - subject is the `hoofdObject` (the zaak URL), data is the fetched resource plus the
-//!   notificatie's `resourceUrl` and `kenmerken`. The resource is fetched with a ZGW
-//!   JWT (client id and secret), except on `destroy`.
+//! - subject is the `hoofdObject` (the zaak URL). data holds the change, not the whole
+//!   resource: `patch` is a JSON Merge Patch (RFC 7396). For a new resource that is the
+//!   whole resource; for an update of the hoofdObject only the fields that differ from
+//!   the current state. An update without changes stores no event. Plus the
+//!   notificatie's `resourceUrl` and `kenmerken`. The resource is fetched with a ZGW JWT
+//!   (client id and secret), except on `destroy`.
+//!   The delta is computed against what OpenEvents last saw, because a ZGW notificatie
+//!   says that something changed, not what. A source that publishes its own changes
+//!   (JSON Commit) makes this step unnecessary.
 //! - The event id is derived from the notificatie, so a notificatie that Open Notificaties
 //!   delivers twice is stored once.
 //! - Order: when a notificatie arrives for a zaak that OpenEvents does not know yet (it
@@ -206,6 +212,35 @@ pub struct Notificatie {
     pub kenmerken: Value,
 }
 
+/// JSON Merge Patch from `old` to `new`, over the fields of `new` only (the state also
+/// holds fields that the projection adds, such as `statussen`). `None`: no change.
+pub fn merge_patch(old: &Value, new: &Value) -> Option<Value> {
+    match (old, new) {
+        (Value::Object(o), Value::Object(n)) => {
+            let mut out = serde_json::Map::new();
+            for (k, nv) in n {
+                match o.get(k) {
+                    Some(ov) if ov == nv => {}
+                    Some(ov @ Value::Object(_)) if nv.is_object() => {
+                        if let Some(p) = merge_patch(ov, nv) {
+                            out.insert(k.clone(), p);
+                        }
+                    }
+                    // A null in a merge patch means "remove"; a field that was already
+                    // absent and is null now did not change.
+                    None if nv.is_null() => {}
+                    _ => {
+                        out.insert(k.clone(), nv.clone());
+                    }
+                }
+            }
+            (!out.is_empty()).then_some(Value::Object(out))
+        }
+        _ if old == new => None,
+        _ => Some(new.clone()),
+    }
+}
+
 pub enum Outcome {
     Stored,
     Ignored(String),
@@ -249,6 +284,31 @@ pub async fn handle(
     } else {
         cfg.fetch(&n.resource_url).await?
     };
+    // The change: against the current state when the hoofdObject itself changed,
+    // otherwise the whole (new) subresource.
+    let patch = if n.actie == "destroy" {
+        Value::Null
+    } else if n.resource_url == n.hoofd_object && n.actie != "create" {
+        let reader = Actor {
+            id: cfg.actor.clone(),
+            claims: json!({}),
+            admin: true,
+        };
+        match register.get_subject(&reader, &n.hoofd_object) {
+            Ok(mut current) => {
+                if let Some(o) = current.as_object_mut() {
+                    o.remove("_meta");
+                }
+                match merge_patch(&current, &resource) {
+                    Some(p) => p,
+                    None => return Ok(Outcome::Ignored("no change".into())),
+                }
+            }
+            Err(_) => resource.clone(),
+        }
+    } else {
+        resource.clone()
+    };
     let time = n
         .aanmaakdatum
         .clone()
@@ -262,7 +322,7 @@ pub async fn handle(
         "subject": n.hoofd_object,
         "time": time,
         "datacontenttype": "application/json",
-        "data": { "resource": resource, "resourceUrl": n.resource_url, "kenmerken": n.kenmerken },
+        "data": { "patch": patch, "resourceUrl": n.resource_url, "kenmerken": n.kenmerken },
     });
     let actor = cfg.actor();
     match register.submit(&actor, event.clone()).await {
@@ -286,7 +346,7 @@ pub async fn handle(
                 "subject": n.hoofd_object,
                 "time": time,
                 "datacontenttype": "application/json",
-                "data": { "resource": zaak, "resourceUrl": n.hoofd_object, "kenmerken": {}, "gespiegeld": true },
+                "data": { "patch": zaak, "resourceUrl": n.hoofd_object, "kenmerken": {}, "gespiegeld": true },
             });
             register
                 .submit(&actor, mirror)
