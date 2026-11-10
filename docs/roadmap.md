@@ -36,6 +36,16 @@ Elke fase eindigt met iets dat te laten zien is, en met de bijbehorende wijzigin
 
 **Demo:** dezelfde Open Inwoner-fork werkt tegen OpenEvents in plaats van tegen de eigen opslag van de Gesprekken API.
 
+## Fase 3b: modules (3 weken)
+
+- Modulehost met wasmtime: commands, reacties, timers, host-functies, sandbox (hergebruik uit atomic-server waar het kan).
+- WIT-interface en een SDK voor Rust en JavaScript.
+- Testrunner voor scenario's (gegeven, bij, verwacht).
+- De Gesprekken-consumers (automatisch antwoord, sluiten) als eerste module.
+- Bezwaarmodule als tweede, met formulieren voor portaal en console.
+
+**Demo:** een bezwaar indienen in het portaal, de behandelaar ziet het in de werkvoorraad gesorteerd op termijn, verdagen en beslissen, alles live.
+
 ## Fase 4: productierijp
 
 - Wissen met crypto-shredding en bewaartermijnen.
