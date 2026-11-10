@@ -1,0 +1,51 @@
+# Roadmap
+
+Elke fase eindigt met iets dat te laten zien is, en met de bijbehorende wijziging in het lab.
+
+## Fase 0: ontwerp (nu)
+
+- Dit repo: eisen, architectuur, query, autorisatie, wissen, profielen, ADR's.
+- Reactie op lab issue #16 en uitbreiding van de schets in lab PR #53.
+
+## Fase 1: kern (2 tot 3 weken)
+
+- Rust-crate `openevents-core`: KV-trait met een embedded implementatie, log, idempotentie, JSON Commit (overgenomen uit ZaakChat `commits.rs`), projectie met declaratieve regels, `head` en 412.
+- `openevents-server`: `POST /events`, `GET /events` (SSE met `Last-Event-ID` en tickets), `GET /subjects/{subject}` en de tijdlijn.
+- Profielen tijdens runtime met JSON Schema-validatie.
+- ACL per onderwerp met `idx_readable`; OIDC-tokens.
+- Conformance-tests in een aparte map, zodat ze ook tegen andere implementaties kunnen draaien.
+
+**Demo:** de Gesprekken API (OneGround-fork) publiceert naar OpenEvents; de medewerkerconsole leest via SSE. Op DemoStack naast de MijnGesprekken-demo.
+
+## Fase 2: query (2 tot 3 weken)
+
+- `POST /query` met de filtertaal uit lab PR #53, `fields`, `include` en `path`.
+- Indexen op velden en verwijzingen; kostenschatting en grenzen.
+- Views.
+- `feedCursor` en live volgen met hetzelfde filter.
+- AuthZEN-tak met filter en veldenlijst.
+
+**Demo:** de werkvoorraad van een Wmo-consulent ("gesprekken bij mijn zaaktypen, met de laatste bijdrage en de zaak erbij") in één request, en "mijn open gesprekken" voor de inwoner, beide live.
+
+## Fase 3: Gesprekken als profiel (2 weken)
+
+- Profiel `nl.vng.gesprekken` met projectie, ACL-regels, automatisch antwoord en automatisch sluiten.
+- Dunne REST-laag die het Gesprekken-contract (lab PR #47) op events vertaalt.
+- Consumer voor klantcontact in Open Klant bij afsluiten.
+
+**Demo:** dezelfde Open Inwoner-fork werkt tegen OpenEvents in plaats van tegen de eigen opslag van de Gesprekken API.
+
+## Fase 4: productierijp
+
+- Wissen met crypto-shredding en bewaartermijnen.
+- Online backup, herstel naar een tijdstip, een replica die het log volgt.
+- Benchmark met 10 miljoen events.
+- Beveiligingsreview.
+- Een tweede profiel (bijvoorbeeld een zaakspiegel voor de tijdlijn over zaken, taken en gesprekken).
+
+## Open vragen
+
+- Wie draait OpenEvents in een pilot: de leverancier van het zaaksysteem, een samenwerkingsverband, of de gemeente zelf (lab ADR-0006)?
+- Is één register per domein genoeg, of willen gemeenten één register voor alle "berichten bij een zaak"?
+- Hoe verhoudt OpenEvents zich tot Open Notificaties: vervangen, of een brug die ZGW-notificaties als events binnenhaalt?
+- Licentie: EUPL-1.2 of MIT?
