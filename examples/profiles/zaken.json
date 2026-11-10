@@ -1,0 +1,313 @@
+{
+  "id": "nl.demo.zaken",
+  "version": "0.1.0",
+  "title": "Demo: meldingen openbare ruimte en omgevingsvergunningen als zaken",
+  "personas": [
+    { "id": "https://id.example.nl/signalen", "label": "Signalen (meldingen-API)", "claims": { "rol": "systeem" } },
+    { "id": "https://id.example.nl/omgevingsloket", "label": "Omgevingsloket (DSO)", "claims": { "rol": "systeem" } },
+    { "id": "https://id.example.nl/ahmed", "label": "Ahmed (team Buitenruimte)", "claims": { "rol": "medewerker", "team": "buitenruimte" } },
+    { "id": "https://id.example.nl/femke", "label": "Femke (vergunningverlener)", "claims": { "rol": "medewerker", "team": "vergunningen" } },
+    { "id": "https://id.example.nl/priya", "label": "Priya (inwoner, melder)", "claims": { "rol": "inwoner" } },
+    { "id": "https://id.example.nl/jan", "label": "Jan (inwoner, aanvrager)", "claims": { "rol": "inwoner" } }
+  ],
+  "types": {
+    "nl.demo.zaken.melding": {
+      "allowCommits": false,
+      "queryable": ["status", "categorie", "subcategorie", "team", "melder", "behandelaar", "locatie.wijk", "prioriteit", "zaaknummer"],
+      "schema": {
+        "type": "object",
+        "required": ["zaaknummer", "categorie", "status", "melder"],
+        "properties": {
+          "zaaknummer": { "type": "string" },
+          "categorie": { "type": "string" },
+          "status": { "enum": ["gemeld", "in behandeling", "ingepland", "afgehandeld", "geannuleerd"] },
+          "melder": { "type": "string" },
+          "team": { "type": "string" }
+        }
+      },
+      "rules": {
+        "read": "melder = actor() OR team = actor('team') OR actor('rol') = 'kcc' OR actor('rol') = 'systeem'",
+        "create": "actor('rol') = 'systeem'",
+        "write": "team = actor('team') OR actor('rol') = 'systeem'",
+        "append": "melder = actor() AND status <> 'afgehandeld'",
+        "fields": [
+          { "when": "actor('rol') = 'kcc'", "show": ["zaaknummer", "categorie", "subcategorie", "status", "locatie", "team", "gemeld", "prioriteit"] }
+        ]
+      }
+    },
+    "nl.demo.zaken.vergunningaanvraag": {
+      "allowCommits": false,
+      "queryable": ["status", "activiteit", "team", "aanvrager", "behandelaar", "locatie.wijk", "zaaknummer", "procedure"],
+      "schema": {
+        "type": "object",
+        "required": ["zaaknummer", "activiteit", "status", "aanvrager"],
+        "properties": {
+          "zaaknummer": { "type": "string" },
+          "activiteit": { "type": "string" },
+          "status": { "enum": ["ingediend", "ontvankelijk", "aanvulling gevraagd", "in behandeling", "advies gevraagd", "besloten", "ingetrokken"] },
+          "aanvrager": { "type": "string" },
+          "team": { "type": "string" }
+        }
+      },
+      "rules": {
+        "read": "aanvrager = actor() OR team = actor('team') OR actor('rol') = 'kcc' OR actor('rol') = 'systeem'",
+        "create": "actor('rol') = 'systeem'",
+        "write": "team = actor('team') OR actor('rol') = 'systeem'",
+        "append": "aanvrager = actor() AND status = 'aanvulling gevraagd'",
+        "fields": [
+          { "when": "actor('rol') = 'kcc'", "show": ["zaaknummer", "activiteit", "status", "locatie", "team", "ingediend", "uiterlijkeBeslisdatum", "procedure"] }
+        ]
+      }
+    }
+  },
+  "events": {
+    "nl.demo.zaken.melding.gedaan": {
+      "subjectType": "nl.demo.zaken.melding",
+      "creates": true,
+      "dataschema": {
+        "type": "object",
+        "required": ["zaaknummer", "categorie", "omschrijving", "melder", "locatie"],
+        "properties": {
+          "zaaknummer": { "type": "string" },
+          "categorie": { "type": "string" },
+          "subcategorie": { "type": "string" },
+          "omschrijving": { "type": "string", "minLength": 1 },
+          "melder": { "type": "string" },
+          "kanaal": { "enum": ["app", "website", "telefoon", "e-mail", "balie"] },
+          "team": { "type": "string" },
+          "prioriteit": { "enum": ["laag", "normaal", "hoog"] },
+          "locatie": {
+            "type": "object",
+            "required": ["adres"],
+            "properties": {
+              "adres": { "type": "string" },
+              "wijk": { "type": "string" },
+              "lat": { "type": "number" },
+              "lon": { "type": "number" }
+            }
+          },
+          "fotos": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "projection": [
+        { "op": "set", "path": "zaaknummer", "value": "$data.zaaknummer" },
+        { "op": "set", "path": "categorie", "value": "$data.categorie" },
+        { "op": "set", "path": "subcategorie", "value": "$data.subcategorie" },
+        { "op": "set", "path": "omschrijving", "value": "$data.omschrijving" },
+        { "op": "set", "path": "melder", "value": "$data.melder" },
+        { "op": "set", "path": "kanaal", "value": "$data.kanaal" },
+        { "op": "set", "path": "team", "value": "$data.team" },
+        { "op": "set", "path": "prioriteit", "value": "$data.prioriteit" },
+        { "op": "set", "path": "locatie", "value": "$data.locatie" },
+        { "op": "set", "path": "fotos", "value": "$data.fotos" },
+        { "op": "set", "path": "status", "value": "gemeld" },
+        { "op": "set", "path": "gemeld", "value": "$time" },
+        { "op": "append", "path": "historie", "value": { "status": "gemeld", "tijd": "$time", "door": "$actor" } }
+      ]
+    },
+    "nl.demo.zaken.melding.toegewezen": {
+      "subjectType": "nl.demo.zaken.melding",
+      "dataschema": {
+        "type": "object",
+        "required": ["behandelaar"],
+        "properties": { "behandelaar": { "type": "string" }, "team": { "type": "string" } }
+      },
+      "projection": [
+        { "op": "set", "path": "behandelaar", "value": "$data.behandelaar" },
+        { "op": "set", "path": "status", "value": "in behandeling" },
+        { "op": "append", "path": "historie", "value": { "status": "in behandeling", "tijd": "$time", "door": "$actor" } }
+      ]
+    },
+    "nl.demo.zaken.melding.ingepland": {
+      "subjectType": "nl.demo.zaken.melding",
+      "dataschema": {
+        "type": "object",
+        "required": ["datum"],
+        "properties": { "datum": { "type": "string" }, "uitvoerder": { "type": "string" }, "toelichting": { "type": "string" } }
+      },
+      "projection": [
+        { "op": "set", "path": "status", "value": "ingepland" },
+        { "op": "set", "path": "planning", "value": "$data" },
+        { "op": "append", "path": "historie", "value": { "status": "ingepland", "tijd": "$time", "door": "$actor" } }
+      ]
+    },
+    "nl.demo.zaken.melding.aangevuld": {
+      "subjectType": "nl.demo.zaken.melding",
+      "right": "append",
+      "dataschema": {
+        "type": "object",
+        "required": ["tekst"],
+        "properties": { "tekst": { "type": "string", "minLength": 1 }, "fotos": { "type": "integer" } }
+      },
+      "projection": [
+        { "op": "append", "path": "aanvullingen", "value": { "tekst": "$data.tekst", "tijd": "$time", "door": "$actor" } },
+        { "op": "increment", "path": "aantalAanvullingen" }
+      ]
+    },
+    "nl.demo.zaken.melding.afgehandeld": {
+      "subjectType": "nl.demo.zaken.melding",
+      "dataschema": {
+        "type": "object",
+        "required": ["resultaat"],
+        "properties": {
+          "resultaat": { "enum": ["opgelost", "niet opgelost", "doorgezet naar derde", "dubbele melding"] },
+          "toelichting": { "type": "string" }
+        }
+      },
+      "projection": [
+        { "op": "set", "path": "status", "value": "afgehandeld" },
+        { "op": "set", "path": "afhandeling", "value": { "resultaat": "$data.resultaat", "toelichting": "$data.toelichting", "tijd": "$time", "door": "$actor" } },
+        { "op": "append", "path": "historie", "value": { "status": "afgehandeld", "tijd": "$time", "door": "$actor" } }
+      ]
+    },
+    "nl.demo.zaken.melding.tevredenheid-gegeven": {
+      "subjectType": "nl.demo.zaken.melding",
+      "right": "write",
+      "dataschema": {
+        "type": "object",
+        "required": ["score"],
+        "properties": { "score": { "type": "integer", "minimum": 1, "maximum": 5 }, "opmerking": { "type": "string" } }
+      },
+      "projection": [
+        { "op": "set", "path": "tevredenheid", "value": "$data" }
+      ]
+    },
+
+    "nl.demo.zaken.vergunningaanvraag.ingediend": {
+      "subjectType": "nl.demo.zaken.vergunningaanvraag",
+      "creates": true,
+      "dataschema": {
+        "type": "object",
+        "required": ["zaaknummer", "olonummer", "activiteit", "aanvrager", "locatie", "omschrijving"],
+        "properties": {
+          "zaaknummer": { "type": "string" },
+          "olonummer": { "type": "string" },
+          "activiteit": { "type": "string" },
+          "omschrijving": { "type": "string" },
+          "aanvrager": { "type": "string" },
+          "gemachtigde": { "type": "string" },
+          "procedure": { "enum": ["regulier", "uitgebreid"] },
+          "team": { "type": "string" },
+          "locatie": {
+            "type": "object",
+            "required": ["adres"],
+            "properties": { "adres": { "type": "string" }, "wijk": { "type": "string" }, "kadastraal": { "type": "string" } }
+          },
+          "bouwkosten": { "type": "integer" },
+          "bijlagen": { "type": "array", "items": { "type": "string" } },
+          "uiterlijkeBeslisdatum": { "type": "string" }
+        }
+      },
+      "projection": [
+        { "op": "set", "path": "zaaknummer", "value": "$data.zaaknummer" },
+        { "op": "set", "path": "olonummer", "value": "$data.olonummer" },
+        { "op": "set", "path": "activiteit", "value": "$data.activiteit" },
+        { "op": "set", "path": "omschrijving", "value": "$data.omschrijving" },
+        { "op": "set", "path": "aanvrager", "value": "$data.aanvrager" },
+        { "op": "set", "path": "gemachtigde", "value": "$data.gemachtigde" },
+        { "op": "set", "path": "procedure", "value": "$data.procedure" },
+        { "op": "set", "path": "team", "value": "$data.team" },
+        { "op": "set", "path": "locatie", "value": "$data.locatie" },
+        { "op": "set", "path": "bouwkosten", "value": "$data.bouwkosten" },
+        { "op": "set", "path": "bijlagen", "value": "$data.bijlagen" },
+        { "op": "set", "path": "uiterlijkeBeslisdatum", "value": "$data.uiterlijkeBeslisdatum" },
+        { "op": "set", "path": "status", "value": "ingediend" },
+        { "op": "set", "path": "ingediend", "value": "$time" },
+        { "op": "append", "path": "historie", "value": { "status": "ingediend", "tijd": "$time", "door": "$actor" } }
+      ]
+    },
+    "nl.demo.zaken.vergunningaanvraag.ontvankelijk-verklaard": {
+      "subjectType": "nl.demo.zaken.vergunningaanvraag",
+      "dataschema": {
+        "type": "object",
+        "required": ["behandelaar"],
+        "properties": { "behandelaar": { "type": "string" }, "toelichting": { "type": "string" } }
+      },
+      "projection": [
+        { "op": "set", "path": "behandelaar", "value": "$data.behandelaar" },
+        { "op": "set", "path": "status", "value": "ontvankelijk" },
+        { "op": "append", "path": "historie", "value": { "status": "ontvankelijk", "tijd": "$time", "door": "$actor" } }
+      ]
+    },
+    "nl.demo.zaken.vergunningaanvraag.aanvulling-gevraagd": {
+      "subjectType": "nl.demo.zaken.vergunningaanvraag",
+      "dataschema": {
+        "type": "object",
+        "required": ["gevraagd", "termijn"],
+        "properties": { "gevraagd": { "type": "array", "items": { "type": "string" } }, "termijn": { "type": "string" }, "toelichting": { "type": "string" } }
+      },
+      "projection": [
+        { "op": "set", "path": "status", "value": "aanvulling gevraagd" },
+        { "op": "set", "path": "openVerzoek", "value": "$data" },
+        { "op": "append", "path": "historie", "value": { "status": "aanvulling gevraagd", "tijd": "$time", "door": "$actor" } }
+      ]
+    },
+    "nl.demo.zaken.vergunningaanvraag.aanvulling-aangeleverd": {
+      "subjectType": "nl.demo.zaken.vergunningaanvraag",
+      "right": "append",
+      "dataschema": {
+        "type": "object",
+        "required": ["bijlagen"],
+        "properties": { "bijlagen": { "type": "array", "items": { "type": "string" } }, "toelichting": { "type": "string" } }
+      },
+      "projection": [
+        { "op": "set", "path": "status", "value": "in behandeling" },
+        { "op": "set", "path": "openVerzoek", "value": null },
+        { "op": "append", "path": "aanvullingen", "value": { "bijlagen": "$data.bijlagen", "tijd": "$time", "door": "$actor" } },
+        { "op": "append", "path": "historie", "value": { "status": "in behandeling", "tijd": "$time", "door": "$actor" } }
+      ]
+    },
+    "nl.demo.zaken.vergunningaanvraag.advies-gevraagd": {
+      "subjectType": "nl.demo.zaken.vergunningaanvraag",
+      "dataschema": {
+        "type": "object",
+        "required": ["adviseur"],
+        "properties": { "adviseur": { "type": "string" }, "vraag": { "type": "string" } }
+      },
+      "projection": [
+        { "op": "set", "path": "status", "value": "advies gevraagd" },
+        { "op": "append", "path": "adviezen", "value": { "adviseur": "$data.adviseur", "vraag": "$data.vraag", "gevraagd": "$time" } },
+        { "op": "append", "path": "historie", "value": { "status": "advies gevraagd", "tijd": "$time", "door": "$actor" } }
+      ]
+    },
+    "nl.demo.zaken.vergunningaanvraag.advies-uitgebracht": {
+      "subjectType": "nl.demo.zaken.vergunningaanvraag",
+      "dataschema": {
+        "type": "object",
+        "required": ["adviseur", "advies"],
+        "properties": { "adviseur": { "type": "string" }, "advies": { "enum": ["positief", "positief met voorwaarden", "negatief"] }, "toelichting": { "type": "string" } }
+      },
+      "projection": [
+        { "op": "set", "path": "status", "value": "in behandeling" },
+        { "op": "append", "path": "adviesUitkomsten", "value": { "adviseur": "$data.adviseur", "advies": "$data.advies", "toelichting": "$data.toelichting", "tijd": "$time" } },
+        { "op": "append", "path": "historie", "value": { "status": "in behandeling", "tijd": "$time", "door": "$actor" } }
+      ]
+    },
+    "nl.demo.zaken.vergunningaanvraag.besluit-genomen": {
+      "subjectType": "nl.demo.zaken.vergunningaanvraag",
+      "dataschema": {
+        "type": "object",
+        "required": ["besluit"],
+        "properties": {
+          "besluit": { "enum": ["verleend", "verleend met voorschriften", "geweigerd", "buiten behandeling gesteld"] },
+          "voorschriften": { "type": "array", "items": { "type": "string" } },
+          "bezwaartermijnTot": { "type": "string" }
+        }
+      },
+      "projection": [
+        { "op": "set", "path": "status", "value": "besloten" },
+        { "op": "set", "path": "besluit", "value": { "uitkomst": "$data.besluit", "voorschriften": "$data.voorschriften", "bezwaartermijnTot": "$data.bezwaartermijnTot", "tijd": "$time", "door": "$actor" } },
+        { "op": "append", "path": "historie", "value": { "status": "besloten", "tijd": "$time", "door": "$actor" } }
+      ]
+    },
+    "nl.demo.zaken.vergunningaanvraag.ingetrokken": {
+      "subjectType": "nl.demo.zaken.vergunningaanvraag",
+      "right": "write",
+      "dataschema": { "type": "object", "properties": { "reden": { "type": "string" } } },
+      "projection": [
+        { "op": "set", "path": "status", "value": "ingetrokken" },
+        { "op": "append", "path": "historie", "value": { "status": "ingetrokken", "tijd": "$time", "door": "$actor" } }
+      ]
+    }
+  }
+}
