@@ -26,6 +26,8 @@ Tijdens het fieldlab MijnGesprekken (10 november 2026) bleek er belangstelling v
 
 ## Documentatie
 
+- [Aansluiten als leverancier](docs/aansluiten.md): events posten, tokens, batch, OpenAPI, of via ZGW-notificaties
+
 - [Eisen](docs/eisen.md): wat het moet kunnen, als eigenschappen
 - [Architectuur](docs/architectuur.md): log, projecties, indexen, API
 - [Query-engine](docs/query.md): taal, paden, representaties, live
@@ -83,6 +85,8 @@ docker run -p 8080:8080 -v openevents:/data \
 | `OPENEVENTS_DEV_AUTH` | `true` staat `Bearer dev:<actor>\|claim=waarde` toe, alleen voor demo's en tests |
 | `OPENEVENTS_ADMINS` | actors (komma's) die profielen mogen registreren |
 | `OPENEVENTS_PROFILES` | map met profielen (`.json`) die bij het starten worden geïnstalleerd |
+| `OPENEVENTS_OIDC_ISSUER`, `…_JWKS_URL`, `…_AUDIENCE`, `OPENEVENTS_ACTOR_CLAIM` | tokens van een eigen IdP (OAuth2 client credentials voor leveranciers), zie [docs/aansluiten.md](docs/aansluiten.md) |
+| `OPENEVENTS_NOTIFICATIES_AUTH`, `OPENEVENTS_ZGW_CLIENT_ID`, `OPENEVENTS_ZGW_SECRET` | ZGW-notificaties als events binnenhalen via `POST /notificaties`, zie [docs/aansluiten.md](docs/aansluiten.md) |
 
 Een gesprek starten en volgen:
 
@@ -106,6 +110,9 @@ curl -s localhost:8080/query -H "$T" -H 'content-type: application/json' \
 - `GET /events` als SSE (`Last-Event-ID`, tickets) of JSON, `GET /subjects/{subject}`, `GET /subjects/{subject}/events`
 - veldregels (`rules.fields` met `when` en `show`): wie een subject alleen beperkt mag zien, krijgt alleen de genoemde velden en events zonder `data` (`dataHidden: true`)
 - persona's in profielen en een beheer-UI op `/ui`
+- OIDC: tokens van een IdP via JWKS (discovery, sleutelrotatie), naast HS256 en dev-tokens
+- batch-ontvangst (`application/cloudevents-batch+json`) en een OpenAPI per profiel (`/profiles/{id}/openapi.json`)
+- `POST /notificaties`: ZGW-notificaties worden events, met een zaakspiegel als voorbeeldprofiel
 - `POST /query` met filter, `fields`, paginering en `feedCursor`; nog zonder veldindexen (scant per type), zonder paden over verwijzingen en zonder `include`
 
 Nog niet: paden over verwijzingen, indexen, views, wissen, OIDC met JWKS, modules.

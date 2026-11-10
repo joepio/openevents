@@ -24,11 +24,13 @@ fn app_with(kv: Arc<dyn KvStore>) -> Router {
         jwt_secret: Some("test-secret".into()),
         dev_auth: true,
         admins: vec!["urn:admin".into()],
+        ..Default::default()
     };
     router(AppState {
         register,
         auth,
         tickets: Arc::new(Tickets::default()),
+        notificaties: None,
     })
 }
 
@@ -903,4 +905,73 @@ async fn filters_only_see_shown_fields() {
     )
     .await;
     assert_eq!(b["results"].as_array().unwrap().len(), 1);
+}
+
+/// A batch: every event on its own, with the outcome per event; then the OpenAPI.
+#[tokio::test]
+async fn batch_and_openapi() {
+    let app = app();
+    install(&app).await;
+    let systeem = "dev:https://id.example.nl/signalen|rol=systeem";
+    let melding = |id: &str, nr: &str| {
+        json!({
+            "specversion": "1.0", "id": id, "source": "https://signalen.demodam.nl",
+            "type": "nl.vng.meldingen.melding.gedaan", "subject": format!("https://zaken.demodam.nl/meldingen/{nr}"),
+            "data": {
+                "zaaknummer": nr, "categorie": "Afval", "omschrijving": "Volle container", "team": "afval",
+                "locatie": { "type": "Point", "coordinates": [5.12, 52.09] },
+                "melder": { "partij": SUZANNE_ID, "rol": "inwoner" }
+            }
+        })
+    };
+    let mut kapot = melding("b3", "MOR-3");
+    kapot["data"]["locatie"] = json!("ergens");
+    let batch = json!([melding("b1", "MOR-1"), melding("b2", "MOR-2"), kapot]);
+    let req = Request::builder()
+        .method("POST")
+        .uri("/events")
+        .header("authorization", format!("Bearer {systeem}"))
+        .header("content-type", "application/cloudevents-batch+json")
+        .body(Body::from(batch.to_string()))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::MULTI_STATUS);
+    let b: Value =
+        serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(b["stored"], 2);
+    assert_eq!(b["results"][2]["status"], 422);
+    assert_eq!(
+        b["results"][2]["problem"]["invalidParams"][0]["name"],
+        "/data/locatie"
+    );
+    // Sending the same batch again is safe: the first two are replays.
+    let (s, b, _) = call(
+        &app,
+        "POST",
+        "/events",
+        Some(systeem),
+        Some(json!([melding("b1", "MOR-1")])),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(b["results"][0]["replayed"], true);
+
+    let (s, o, _) = call(
+        &app,
+        "GET",
+        "/profiles/nl.vng.meldingen/openapi.json",
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(o["openapi"], "3.1.0");
+    let ev = &o["components"]["schemas"]["Event_nl_vng_meldingen_melding_gedaan"];
+    assert_eq!(
+        ev["allOf"][1]["properties"]["type"]["const"],
+        "nl.vng.meldingen.melding.gedaan"
+    );
+    assert!(o["paths"]["/events"]["post"]["requestBody"]["content"]
+        ["application/cloudevents-batch+json"]
+        .is_object());
 }

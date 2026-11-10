@@ -49,13 +49,21 @@ async fn main() {
     }
 
     let auth = AuthConfig::from_env();
-    if auth.jwt_secret.is_none() && !auth.dev_auth {
-        tracing::warn!("no OPENEVENTS_JWT_SECRET and no OPENEVENTS_DEV_AUTH: every request will be unauthorized");
+    if let Some(oidc) = &auth.oidc {
+        match oidc.refresh().await {
+            Ok(n) => tracing::info!("OIDC: {n} signing keys loaded"),
+            // Not fatal: the IdP may come up later; keys are fetched on the first token.
+            Err(e) => tracing::warn!("OIDC: could not load keys yet: {e}"),
+        }
+    }
+    if auth.jwt_secret.is_none() && !auth.dev_auth && auth.oidc.is_none() {
+        tracing::warn!("no OIDC, no OPENEVENTS_JWT_SECRET and no OPENEVENTS_DEV_AUTH: every request will be unauthorized");
     }
     let state = AppState {
         register,
         auth,
         tickets: Arc::new(Tickets::default()),
+        notificaties: openevents_server::notificaties::NotificatiesConfig::from_env().map(Arc::new),
     };
     let app = router(state).layer(CorsLayer::permissive());
 

@@ -1,0 +1,47 @@
+# Aansluiten als leverancier
+
+Hoe een systeem van een leverancier of gemeente events naar OpenEvents stuurt. Er zijn twee routes: zelf CloudEvents posten, of niets veranderen en de Notificaties-adapter gebruiken.
+
+## Route 1: zelf events posten
+
+1. **Profiel.** Kies het profiel waar je events onder vallen (bijvoorbeeld `nl.vng.meldingen`). `GET /profiles/{id}/openapi.json` geeft een OpenAPI 3.1-document met per eventtype het schema van `data`, gegenereerd uit het profiel. Valideer daar in je eigen tests tegen.
+2. **Token.** Vraag een client aan bij de IdP van de gemeente (OAuth2 client credentials). OpenEvents controleert het token met de sleutels uit de JWKS van die IdP. Je systeem krijgt een claim waarmee de regels van het profiel het herkennen, bijvoorbeeld `rol=systeem`.
+3. **Posten.** `POST /events` met één CloudEvent, of met een array (`application/cloudevents-batch+json`, maximaal 500). In een batch wordt elk event apart verwerkt; het antwoord geeft per event de uitkomst (200 als alles goed ging, 207 als er iets is geweigerd).
+4. **Opnieuw proberen is veilig.** `source` + `id` is idempotent: hetzelfde event nog een keer sturen geeft het eerdere antwoord terug (header `Idempotent-Replayed`). Kies dus vaste id's, bijvoorbeeld afgeleid van je eigen sleutel.
+5. **Fouten.** Een 422 bevat `invalidParams` met het precieze pad (`/data/locatie`). Er wordt dan niets opgeslagen.
+
+Wat je moet weten:
+
+- **Volgorde.** Het eerste event van een subject maakt het aan (`creates` in het profiel). Een later event voor een subject dat nog niet bestaat, wordt geweigerd. Stuur bij een eerste aansluiting dus eerst de bestaande zaken in (een batch met de `…aangemaakt`-events), en daarna de stroom.
+- **Alles of niets** over meerdere subjects is `json.commit.transaction`, niet de batch.
+
+## Route 2: niets veranderen, via ZGW-notificaties
+
+Systemen die nu al ZGW-notificaties versturen (Open Zaak via Open Notificaties) hoeven niets te veranderen. OpenEvents abonneert zich als gewone abonnee:
+
+- callback-URL: `https://<openevents>/notificaties`, `auth`: een geheim dat ook in `OPENEVENTS_NOTIFICATIES_AUTH` staat;
+- kanalen: bijvoorbeeld `zaken`.
+
+Per notificatie haalt OpenEvents de resource op (met een ZGW-JWT, `OPENEVENTS_ZGW_CLIENT_ID` en `OPENEVENTS_ZGW_SECRET`) en slaat een event op:
+
+- type `nl.vng.zgw.<kanaal>.<resource>.<actie>`, bijvoorbeeld `nl.vng.zgw.zaken.status.create`;
+- subject: het `hoofdObject` (de zaak-URL);
+- data: de opgehaalde resource, `resourceUrl` en `kenmerken`.
+
+Alleen types die een profiel registreert worden opgeslagen; de rest wordt bevestigd en genegeerd. Het voorbeeldprofiel `examples/profiles/zgw-zaken.json` maakt er een zaakspiegel van: de zaak, de huidige status en alle statussen, betrokkenen, resultaat, documenten en objecten. Leesregel: een medewerker ziet de zaaktypen in zijn token (`zaaktype = actor('zaaktypen')`), het KCC een beperkte versie, de initiator zijn eigen zaak (`rollen.initiator = actor('bsn')`).
+
+Volgorde lost de adapter zelf op: komt er een notificatie voor een zaak die OpenEvents nog niet kent, dan haalt hij eerst de zaak op en slaat die op als `…zaak.create`. Een notificatie die twee keer binnenkomt, wordt één keer opgeslagen (de event-id is afgeleid van de notificatie). Bij een fout antwoordt OpenEvents met 502, zodat Open Notificaties het later opnieuw probeert.
+
+Nog niet: vertrouwelijkheidaanduiding in de leesregel (dat vraagt een vergelijking op volgorde van een opsomming), en `destroy` van subresources.
+
+## Configuratie
+
+| Variabele | Betekenis |
+|---|---|
+| `OPENEVENTS_OIDC_ISSUER` | issuer van de IdP; de JWKS wordt via discovery gevonden en ververst bij een onbekende `kid` |
+| `OPENEVENTS_OIDC_JWKS_URL` | JWKS-URL, als er geen discovery is |
+| `OPENEVENTS_OIDC_AUDIENCE` | verwachte `aud` (aanbevolen) |
+| `OPENEVENTS_ACTOR_CLAIM` | claim met de actor-id, standaard `sub`; bij client credentials vaak `azp` of `client_id` |
+| `OPENEVENTS_NOTIFICATIES_AUTH` | exacte Authorization-header die Open Notificaties meestuurt; zonder deze variabele staat `/notificaties` uit |
+| `OPENEVENTS_ZGW_CLIENT_ID`, `OPENEVENTS_ZGW_SECRET` | om resources op te halen bij Open Zaak |
+| `OPENEVENTS_NOTIFICATIES_ACTOR` | actor-id van de adapter, standaard `urn:openevents:notificaties` (claim `rol=systeem`) |

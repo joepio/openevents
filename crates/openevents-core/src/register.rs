@@ -405,6 +405,11 @@ impl Register {
             .map(|p| p.raw.clone())
     }
 
+    /// Is this event type registered in one of the profiles?
+    pub fn knows_event_type(&self, name: &str) -> bool {
+        self.profiles.read().unwrap().event_type(name).is_some()
+    }
+
     pub fn list_profiles(&self) -> Vec<Value> {
         let ps = self.profiles.read().unwrap();
         let mut list: Vec<_> = ps

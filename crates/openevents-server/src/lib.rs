@@ -1,6 +1,8 @@
 //! HTTP API of OpenEvents (docs/architectuur.md, "API-oppervlak").
 
 pub mod auth;
+pub mod notificaties;
+pub mod openapi;
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -19,12 +21,15 @@ use serde_json::{json, Value};
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::auth::{AuthConfig, Tickets};
+use crate::notificaties::NotificatiesConfig;
 
 #[derive(Clone)]
 pub struct AppState {
     pub register: Arc<Register>,
     pub auth: AuthConfig,
     pub tickets: Arc<Tickets>,
+    /// `POST /notificaties`, only when configured.
+    pub notificaties: Option<Arc<NotificatiesConfig>>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -33,11 +38,13 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(|| async { "ok" }))
         .route("/events", get(get_events).post(post_events))
         .route("/events/tickets", post(post_ticket))
+        .route("/notificaties", post(post_notificatie))
         .route("/subjects/{subject}", get(get_subject))
         .route("/subjects/{subject}/events", get(get_timeline))
         .route("/query", post(post_query))
         .route("/profiles", get(list_profiles))
         .route("/profiles/{id}", get(get_profile).put(put_profile))
+        .route("/profiles/{id}/openapi.json", get(get_profile_openapi))
         .route("/ui", get(ui))
         .route("/ui/", get(ui))
         .route("/ui/config", get(ui_config))
@@ -104,8 +111,12 @@ fn unauthorized() -> Response {
 }
 
 #[allow(clippy::result_large_err)]
-fn actor(state: &AppState, headers: &HeaderMap) -> Result<Actor, Response> {
-    state.auth.from_headers(headers).ok_or_else(unauthorized)
+async fn actor(state: &AppState, headers: &HeaderMap) -> Result<Actor, Response> {
+    state
+        .auth
+        .from_headers(headers)
+        .await
+        .ok_or_else(unauthorized)
 }
 
 // ---------- handlers ----------
@@ -128,7 +139,7 @@ async fn post_events(
     headers: HeaderMap,
     body: Option<Json<Value>>,
 ) -> Response {
-    let actor = match actor(&state, &headers) {
+    let actor = match actor(&state, &headers).await {
         Ok(a) => a,
         Err(r) => return r,
     };
@@ -140,6 +151,9 @@ async fn post_events(
             None,
         );
     };
+    if let Value::Array(events) = body {
+        return post_batch(&state, &actor, events).await;
+    }
     match state.register.submit(&actor, body).await {
         Ok(ok) => {
             let mut res = (StatusCode::CREATED, Json(ok.body)).into_response();
@@ -153,8 +167,99 @@ async fn post_events(
     }
 }
 
+/// Most events in one batch.
+pub const MAX_BATCH: usize = 500;
+
+/// A batch (`application/cloudevents-batch+json`, a JSON array): every event is handled
+/// on its own, in order, as if it was posted alone. The answer lists the outcome per
+/// event. All or nothing is what `json.commit.transaction` is for.
+async fn post_batch(state: &AppState, actor: &Actor, events: Vec<Value>) -> Response {
+    if events.len() > MAX_BATCH {
+        return problem(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "Batch too large",
+            &format!("At most {MAX_BATCH} events per batch."),
+            None,
+        );
+    }
+    let mut results = Vec::with_capacity(events.len());
+    let (mut ok, mut failed) = (0, 0);
+    for ev in events {
+        let id = ev.get("id").cloned().unwrap_or(Value::Null);
+        match state.register.submit(actor, ev).await {
+            Ok(r) => {
+                ok += 1;
+                results.push(
+                    json!({ "id": id, "status": 201, "replayed": r.replayed, "body": r.body }),
+                );
+            }
+            Err(e) => {
+                failed += 1;
+                let res = error_response(e);
+                let status = res.status().as_u16();
+                let bytes = axum::body::to_bytes(res.into_body(), 64 * 1024)
+                    .await
+                    .unwrap_or_default();
+                let problem: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+                results.push(json!({ "id": id, "status": status, "problem": problem }));
+            }
+        }
+    }
+    let status = if failed == 0 {
+        StatusCode::OK
+    } else {
+        StatusCode::MULTI_STATUS
+    };
+    (
+        status,
+        Json(json!({ "stored": ok, "failed": failed, "results": results })),
+    )
+        .into_response()
+}
+
+async fn post_notificatie(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Option<Json<notificaties::Notificatie>>,
+) -> Response {
+    let Some(cfg) = &state.notificaties else {
+        return error_response(RegisterError::NotFound);
+    };
+    let auth = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+    if !cfg.authorized(auth) {
+        return unauthorized();
+    }
+    let Some(Json(n)) = body else {
+        return problem(
+            StatusCode::BAD_REQUEST,
+            "Bad request",
+            "Body must be a ZGW notificatie.",
+            None,
+        );
+    };
+    match notificaties::handle(cfg, &state.register, n).await {
+        Ok(notificaties::Outcome::Stored) => StatusCode::NO_CONTENT.into_response(),
+        Ok(notificaties::Outcome::Ignored(why)) => {
+            tracing::debug!("notificatie ignored: {why}");
+            StatusCode::NO_CONTENT.into_response()
+        }
+        // Open Notificaties retries on an error, which is what we want here.
+        Err(e) => {
+            tracing::warn!("notificatie failed: {e}");
+            problem(
+                StatusCode::BAD_GATEWAY,
+                "Notificatie not processed",
+                &e,
+                None,
+            )
+        }
+    }
+}
+
 async fn post_ticket(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    match actor(&state, &headers) {
+    match actor(&state, &headers).await {
         Ok(a) => Json(
             json!({ "ticket": state.tickets.issue(a), "expiresIn": auth::TICKET_TTL.as_secs() }),
         )
@@ -183,7 +288,7 @@ async fn get_events(
     headers: HeaderMap,
     Query(p): Query<EventsParams>,
 ) -> Response {
-    let actor = match (&p.ticket, state.auth.from_headers(&headers)) {
+    let actor = match (&p.ticket, state.auth.from_headers(&headers).await) {
         (_, Some(a)) => a,
         (Some(t), None) => match state.tickets.redeem(t) {
             Some(a) => a,
@@ -301,7 +406,7 @@ async fn get_subject(
     headers: HeaderMap,
     Path(subject): Path<String>,
 ) -> Response {
-    let actor = match actor(&state, &headers) {
+    let actor = match actor(&state, &headers).await {
         Ok(a) => a,
         Err(r) => return r,
     };
@@ -317,7 +422,7 @@ async fn get_timeline(
     Path(subject): Path<String>,
     Query(p): Query<EventsParams>,
 ) -> Response {
-    let actor = match actor(&state, &headers) {
+    let actor = match actor(&state, &headers).await {
         Ok(a) => a,
         Err(r) => return r,
     };
@@ -337,7 +442,7 @@ async fn post_query(
     headers: HeaderMap,
     body: Option<Json<QueryRequest>>,
 ) -> Response {
-    let actor = match actor(&state, &headers) {
+    let actor = match actor(&state, &headers).await {
         Ok(a) => a,
         Err(r) => return r,
     };
@@ -366,13 +471,20 @@ async fn get_profile(State(state): State<AppState>, Path(id): Path<String>) -> R
     }
 }
 
+async fn get_profile_openapi(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    match state.register.get_profile(&id) {
+        Some(p) => Json(openapi::for_profile(&p)).into_response(),
+        None => error_response(RegisterError::NotFound),
+    }
+}
+
 async fn put_profile(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<String>,
     body: Option<Json<Value>>,
 ) -> Response {
-    let actor = match actor(&state, &headers) {
+    let actor = match actor(&state, &headers).await {
         Ok(a) => a,
         Err(r) => return r,
     };

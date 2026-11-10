@@ -1,0 +1,451 @@
+{
+  "id": "nl.vng.zgw.zaken",
+  "version": "0.1.0",
+  "title": "Zaakspiegel uit ZGW-notificaties (Open Zaak via Open Notificaties)",
+  "personas": [
+    {
+      "id": "https://id.example.nl/behandelaar",
+      "label": "Behandelaar (zaaktype bezwaar)",
+      "claims": {
+        "rol": "medewerker",
+        "zaaktypen": [
+          "https://openzaak.demodam.nl/catalogi/api/v1/zaaktypen/bezwaar"
+        ]
+      }
+    },
+    {
+      "id": "https://id.example.nl/kim",
+      "label": "Kim (KCC-medewerker)",
+      "claims": {
+        "rol": "kcc"
+      }
+    },
+    {
+      "id": "https://id.example.nl/priya",
+      "label": "Priya (inwoner, BSN 999993653)",
+      "claims": {
+        "rol": "inwoner",
+        "bsn": "999993653"
+      }
+    }
+  ],
+  "types": {
+    "nl.vng.zgw.zaak": {
+      "allowCommits": false,
+      "queryable": [
+        "identificatie",
+        "bronorganisatie",
+        "zaaktype",
+        "startdatum",
+        "einddatum",
+        "vertrouwelijkheidaanduiding",
+        "huidigeStatus.statustype",
+        "rollen.initiator",
+        "verwijderd"
+      ],
+      "schema": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "identificatie": {
+            "type": "string"
+          },
+          "zaaktype": {
+            "type": "string"
+          }
+        }
+      },
+      "rules": {
+        "read": "zaaktype = actor('zaaktypen') OR actor('rol') IN ('kcc', 'systeem') OR rollen.initiator = actor('bsn')",
+        "write": "actor('rol') = 'systeem'",
+        "create": "actor('rol') = 'systeem'",
+        "fields": [
+          {
+            "when": "actor('rol') = 'kcc'",
+            "show": [
+              "identificatie",
+              "omschrijving",
+              "zaaktype",
+              "startdatum",
+              "einddatum",
+              "huidigeStatus",
+              "resultaat"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "events": {
+    "nl.vng.zgw.zaken.zaak.create": {
+      "subjectType": "nl.vng.zgw.zaak",
+      "creates": true,
+      "dataschema": {
+        "type": "object",
+        "required": [
+          "resourceUrl"
+        ],
+        "properties": {
+          "resource": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "resourceUrl": {
+            "type": "string"
+          },
+          "kenmerken": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "gespiegeld": {
+            "type": "boolean"
+          }
+        }
+      },
+      "projection": [
+        {
+          "op": "merge",
+          "path": "",
+          "value": "$data.resource"
+        }
+      ]
+    },
+    "nl.vng.zgw.zaken.zaak.update": {
+      "subjectType": "nl.vng.zgw.zaak",
+      "right": "write",
+      "dataschema": {
+        "type": "object",
+        "required": [
+          "resourceUrl"
+        ],
+        "properties": {
+          "resource": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "resourceUrl": {
+            "type": "string"
+          },
+          "kenmerken": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "gespiegeld": {
+            "type": "boolean"
+          }
+        }
+      },
+      "projection": [
+        {
+          "op": "merge",
+          "path": "",
+          "value": "$data.resource"
+        }
+      ]
+    },
+    "nl.vng.zgw.zaken.zaak.partial_update": {
+      "subjectType": "nl.vng.zgw.zaak",
+      "right": "write",
+      "dataschema": {
+        "type": "object",
+        "required": [
+          "resourceUrl"
+        ],
+        "properties": {
+          "resource": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "resourceUrl": {
+            "type": "string"
+          },
+          "kenmerken": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "gespiegeld": {
+            "type": "boolean"
+          }
+        }
+      },
+      "projection": [
+        {
+          "op": "merge",
+          "path": "",
+          "value": "$data.resource"
+        }
+      ]
+    },
+    "nl.vng.zgw.zaken.zaak.destroy": {
+      "subjectType": "nl.vng.zgw.zaak",
+      "right": "write",
+      "dataschema": {
+        "type": "object",
+        "required": [
+          "resourceUrl"
+        ],
+        "properties": {
+          "resource": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "resourceUrl": {
+            "type": "string"
+          },
+          "kenmerken": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "gespiegeld": {
+            "type": "boolean"
+          }
+        }
+      },
+      "projection": [
+        {
+          "op": "set",
+          "path": "verwijderd",
+          "value": true
+        }
+      ]
+    },
+    "nl.vng.zgw.zaken.status.create": {
+      "subjectType": "nl.vng.zgw.zaak",
+      "right": "write",
+      "dataschema": {
+        "type": "object",
+        "required": [
+          "resourceUrl"
+        ],
+        "properties": {
+          "resource": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "resourceUrl": {
+            "type": "string"
+          },
+          "kenmerken": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "gespiegeld": {
+            "type": "boolean"
+          }
+        }
+      },
+      "projection": [
+        {
+          "op": "set",
+          "path": "huidigeStatus",
+          "value": {
+            "url": "$data.resource.url",
+            "statustype": "$data.resource.statustype",
+            "datumStatusGezet": "$data.resource.datumStatusGezet",
+            "statustoelichting": "$data.resource.statustoelichting"
+          }
+        },
+        {
+          "op": "append",
+          "path": "statussen",
+          "value": {
+            "url": "$data.resource.url",
+            "statustype": "$data.resource.statustype",
+            "datumStatusGezet": "$data.resource.datumStatusGezet"
+          }
+        }
+      ]
+    },
+    "nl.vng.zgw.zaken.rol.create": {
+      "subjectType": "nl.vng.zgw.zaak",
+      "right": "write",
+      "dataschema": {
+        "type": "object",
+        "required": [
+          "resourceUrl"
+        ],
+        "properties": {
+          "resource": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "resourceUrl": {
+            "type": "string"
+          },
+          "kenmerken": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "gespiegeld": {
+            "type": "boolean"
+          }
+        }
+      },
+      "projection": [
+        {
+          "op": "append",
+          "path": "betrokkenen",
+          "value": {
+            "url": "$data.resource.url",
+            "roltype": "$data.resource.roltype",
+            "omschrijvingGeneriek": "$data.resource.omschrijvingGeneriek",
+            "betrokkeneType": "$data.resource.betrokkeneType",
+            "betrokkene": "$data.resource.betrokkene"
+          }
+        },
+        {
+          "op": "append",
+          "path": "rollen.{$data.resource.omschrijvingGeneriek}",
+          "value": "$data.resource.betrokkeneIdentificatie.inpBsn"
+        }
+      ]
+    },
+    "nl.vng.zgw.zaken.resultaat.create": {
+      "subjectType": "nl.vng.zgw.zaak",
+      "right": "write",
+      "dataschema": {
+        "type": "object",
+        "required": [
+          "resourceUrl"
+        ],
+        "properties": {
+          "resource": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "resourceUrl": {
+            "type": "string"
+          },
+          "kenmerken": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "gespiegeld": {
+            "type": "boolean"
+          }
+        }
+      },
+      "projection": [
+        {
+          "op": "set",
+          "path": "resultaat",
+          "value": {
+            "url": "$data.resource.url",
+            "resultaattype": "$data.resource.resultaattype",
+            "toelichting": "$data.resource.toelichting"
+          }
+        }
+      ]
+    },
+    "nl.vng.zgw.zaken.zaakinformatieobject.create": {
+      "subjectType": "nl.vng.zgw.zaak",
+      "right": "write",
+      "dataschema": {
+        "type": "object",
+        "required": [
+          "resourceUrl"
+        ],
+        "properties": {
+          "resource": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "resourceUrl": {
+            "type": "string"
+          },
+          "kenmerken": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "gespiegeld": {
+            "type": "boolean"
+          }
+        }
+      },
+      "projection": [
+        {
+          "op": "append",
+          "path": "documenten",
+          "value": "$data.resource.informatieobject"
+        }
+      ]
+    },
+    "nl.vng.zgw.zaken.zaakobject.create": {
+      "subjectType": "nl.vng.zgw.zaak",
+      "right": "write",
+      "dataschema": {
+        "type": "object",
+        "required": [
+          "resourceUrl"
+        ],
+        "properties": {
+          "resource": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "resourceUrl": {
+            "type": "string"
+          },
+          "kenmerken": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "gespiegeld": {
+            "type": "boolean"
+          }
+        }
+      },
+      "projection": [
+        {
+          "op": "append",
+          "path": "objecten",
+          "value": {
+            "object": "$data.resource.object",
+            "objectType": "$data.resource.objectType"
+          }
+        }
+      ]
+    }
+  }
+}
