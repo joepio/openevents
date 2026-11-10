@@ -292,9 +292,12 @@ fn render(v: &Value, ctx: &TemplateContext) -> Value {
             "$subject" => Value::String(ctx.subject.into()),
             "$type" => Value::String(ctx.event_type.into()),
             other => match other.strip_prefix("$data.") {
-                Some(path) => cql2::lookup(ctx.data, path)
-                    .first()
-                    .map(|v| (*v).clone())
+                // An exact path: a list value stays a list (unlike query lookups,
+                // which flatten lists to match any element).
+                Some(path) => path
+                    .split('.')
+                    .try_fold(ctx.data, |v, part| v.get(part))
+                    .cloned()
                     .unwrap_or(Value::Null),
                 None => v.clone(),
             },
@@ -491,6 +494,38 @@ mod tests {
         assert_eq!(
             state,
             json!({ "bijdragen": [ { "tekst": "hallo", "op": "t1" } ], "laatsteBijdrage": { "door": "a" }, "aantal": 1, "x": 1, "rollen": { "x": ["a"] } })
+        );
+    }
+
+    #[test]
+    fn data_lists_stay_lists() {
+        let data = json!({ "activiteiten": ["bouwen", "kappen"], "a": { "b": [1] } });
+        let ctx = TemplateContext {
+            data: &data,
+            time: "t1",
+            actor: "a",
+            id: "e1",
+            subject: "s",
+            event_type: "x.y",
+        };
+        let mut state = json!({});
+        apply_projection(
+            &mut state,
+            &[
+                ProjOp::Set {
+                    path: "activiteiten".into(),
+                    value: json!("$data.activiteiten"),
+                },
+                ProjOp::Set {
+                    path: "b".into(),
+                    value: json!("$data.a.b"),
+                },
+            ],
+            &ctx,
+        );
+        assert_eq!(
+            state,
+            json!({ "activiteiten": ["bouwen", "kappen"], "b": [1] })
         );
     }
 }

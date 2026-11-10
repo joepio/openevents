@@ -75,6 +75,8 @@ async fn install(app: &Router) {
     for (id, name) in [
         ("nl.vng.gesprekken", "gesprekken"),
         ("nl.example.notities", "notities"),
+        ("nl.vng.meldingen", "meldingen"),
+        ("nl.vng.vergunningen", "vergunningen"),
     ] {
         let (s, _, _) = call(
             app,
@@ -143,7 +145,7 @@ async fn profiles_need_an_admin() {
     assert_eq!(s, StatusCode::UNAUTHORIZED);
     install(&app).await;
     let (_, b, _) = call(&app, "GET", "/profiles", None, None).await;
-    assert_eq!(b["profiles"].as_array().unwrap().len(), 2);
+    assert_eq!(b["profiles"].as_array().unwrap().len(), 4);
 }
 
 #[tokio::test]
@@ -850,4 +852,55 @@ async fn ui_and_personas() {
         .collect();
     assert!(labels.iter().any(|l| l.contains("KCC")));
     assert!(labels[0].contains("Beheerder"));
+}
+
+/// A field rule that depends on the subject: other inwoners see a melding without the
+/// melder, and cannot find out who made it by filtering on the hidden field.
+#[tokio::test]
+async fn filters_only_see_shown_fields() {
+    let app = app();
+    install(&app).await;
+    let (s, b, _) = call(
+        &app,
+        "POST",
+        "/events",
+        Some("dev:https://id.example.nl/suzanne|rol=inwoner"),
+        Some(ev(
+            "m1",
+            "nl.vng.meldingen.melding.gedaan",
+            "urn:uuid:melding-1",
+            json!({
+                "zaaknummer": "MOR-1", "categorie": "afval", "omschrijving": "Volle container",
+                "locatie": { "type": "Point", "coordinates": [5.12, 52.09] },
+                "melder": { "partij": SUZANNE_ID, "rol": "inwoner" }
+            }),
+        )),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let karel = "dev:https://id.example.nl/karel|rol=inwoner";
+    let q = |filter: &str| json!({ "type": "nl.vng.meldingen.melding", "filter": filter });
+    let (_, b, _) = call(
+        &app,
+        "POST",
+        "/query",
+        Some(karel),
+        Some(q("categorie = 'afval'")),
+    )
+    .await;
+    assert_eq!(b["results"].as_array().unwrap().len(), 1);
+    assert!(b["results"][0].get("melder").is_none());
+    let probe = format!("melder.partij = '{SUZANNE_ID}'");
+    let (_, b, _) = call(&app, "POST", "/query", Some(karel), Some(q(&probe))).await;
+    assert_eq!(b["results"].as_array().unwrap().len(), 0);
+    // Suzanne finds her own melding with the same filter.
+    let (_, b, _) = call(
+        &app,
+        "POST",
+        "/query",
+        Some("dev:https://id.example.nl/suzanne|rol=inwoner"),
+        Some(q(&probe)),
+    )
+    .await;
+    assert_eq!(b["results"].as_array().unwrap().len(), 1);
 }

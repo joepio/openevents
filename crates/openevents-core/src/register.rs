@@ -712,8 +712,15 @@ impl Register {
                 if record.deleted || !readable_by(t, &record, actor) {
                     continue;
                 }
+                let allowed = visible_fields(t, &record.state, actor);
                 if let Some(f) = &filter {
-                    if !f.eval(&record.state, &ctx) {
+                    // You filter over what you may see: for a limited subject the filter
+                    // only sees the shown fields, so it cannot probe hidden ones.
+                    let matches = match allowed {
+                        Some(show) => f.eval(&pick_fields(&record.state, show), &ctx),
+                        None => f.eval(&record.state, &ctx),
+                    };
+                    if !matches {
                         continue;
                     }
                 }
@@ -721,7 +728,6 @@ impl Register {
                     next = Some(subject_cursor(&results));
                     break 'scan;
                 }
-                let allowed = visible_fields(t, &record.state, actor);
                 let mut rep = record.representation_with(allowed);
                 if let Some(fields) = &req.fields {
                     let meta = rep["_meta"].clone();

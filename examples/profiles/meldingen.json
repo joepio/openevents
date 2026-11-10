@@ -1,0 +1,433 @@
+{
+  "id": "nl.vng.meldingen",
+  "version": "0.1.0",
+  "title": "Meldingen openbare ruimte (simulatievoorbeeld)",
+  "personas": [
+    {
+      "id": "https://id.example.nl/suzanne",
+      "label": "Suzanne (inwoner)",
+      "claims": {
+        "rol": "inwoner"
+      }
+    },
+    {
+      "id": "https://id.example.nl/karel",
+      "label": "Karel (andere inwoner)",
+      "claims": {
+        "rol": "inwoner"
+      }
+    },
+    {
+      "id": "https://id.example.nl/daan",
+      "label": "Daan (team buitenruimte)",
+      "claims": {
+        "rol": "medewerker",
+        "team": "buitenruimte"
+      }
+    },
+    {
+      "id": "https://id.example.nl/kim",
+      "label": "Kim (KCC-medewerker)",
+      "claims": {
+        "rol": "kcc"
+      }
+    }
+  ],
+  "types": {
+    "nl.vng.meldingen.melding": {
+      "allowCommits": false,
+      "queryable": [
+        "status",
+        "categorie",
+        "team",
+        "wijk",
+        "zaaknummer",
+        "kanaal",
+        "melder.partij",
+        "gemeld"
+      ],
+      "schema": {
+        "type": "object",
+        "required": [
+          "zaaknummer",
+          "categorie",
+          "omschrijving",
+          "status",
+          "locatie"
+        ],
+        "properties": {
+          "zaaknummer": {
+            "type": "string"
+          },
+          "categorie": {
+            "enum": [
+              "afval",
+              "verlichting",
+              "wegdek",
+              "groen",
+              "overlast",
+              "fietswrak",
+              "graffiti"
+            ]
+          },
+          "omschrijving": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "gemeld",
+              "toegewezen",
+              "in behandeling",
+              "opgelost",
+              "heropend",
+              "afgesloten"
+            ]
+          },
+          "locatie": {
+            "type": "object",
+            "required": [
+              "type",
+              "coordinates"
+            ],
+            "properties": {
+              "type": {
+                "const": "Point"
+              },
+              "coordinates": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "items": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          "adres": {
+            "type": "string"
+          },
+          "wijk": {
+            "type": "string"
+          },
+          "team": {
+            "type": "string"
+          },
+          "kanaal": {
+            "enum": [
+              "app",
+              "website",
+              "telefoon"
+            ]
+          },
+          "melder": {
+            "type": "object",
+            "required": [
+              "partij",
+              "rol"
+            ],
+            "properties": {
+              "partij": {
+                "type": "string"
+              },
+              "rol": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "rules": {
+        "read": "melder.partij = actor() OR team = actor('team') OR actor('rol') IN ('kcc', 'regie', 'inwoner')",
+        "create": "melder.partij = actor() OR actor('rol') = 'kcc'",
+        "append": "melder.partij = actor()",
+        "write": "team = actor('team') OR actor('rol') = 'regie'",
+        "fields": [
+          {
+            "when": "actor('rol') = 'inwoner' AND melder.partij <> actor()",
+            "show": [
+              "zaaknummer",
+              "categorie",
+              "status",
+              "locatie",
+              "wijk",
+              "gemeld",
+              "opgelost.tijd"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "events": {
+    "nl.vng.meldingen.melding.gedaan": {
+      "subjectType": "nl.vng.meldingen.melding",
+      "creates": true,
+      "dataschema": {
+        "type": "object",
+        "required": [
+          "zaaknummer",
+          "categorie",
+          "omschrijving",
+          "locatie"
+        ],
+        "properties": {
+          "zaaknummer": {
+            "type": "string"
+          },
+          "categorie": {
+            "enum": [
+              "afval",
+              "verlichting",
+              "wegdek",
+              "groen",
+              "overlast",
+              "fietswrak",
+              "graffiti"
+            ]
+          },
+          "omschrijving": {
+            "type": "string",
+            "minLength": 1
+          },
+          "locatie": {
+            "type": "object",
+            "required": [
+              "type",
+              "coordinates"
+            ],
+            "properties": {
+              "type": {
+                "const": "Point"
+              },
+              "coordinates": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "items": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          "adres": {
+            "type": "string"
+          },
+          "wijk": {
+            "type": "string"
+          },
+          "kanaal": {
+            "enum": [
+              "app",
+              "website",
+              "telefoon"
+            ]
+          },
+          "melder": {
+            "type": "object",
+            "required": [
+              "partij",
+              "rol"
+            ],
+            "properties": {
+              "partij": {
+                "type": "string"
+              },
+              "rol": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "projection": [
+        {
+          "op": "set",
+          "path": "zaaknummer",
+          "value": "$data.zaaknummer"
+        },
+        {
+          "op": "set",
+          "path": "categorie",
+          "value": "$data.categorie"
+        },
+        {
+          "op": "set",
+          "path": "omschrijving",
+          "value": "$data.omschrijving"
+        },
+        {
+          "op": "set",
+          "path": "locatie",
+          "value": "$data.locatie"
+        },
+        {
+          "op": "set",
+          "path": "adres",
+          "value": "$data.adres"
+        },
+        {
+          "op": "set",
+          "path": "wijk",
+          "value": "$data.wijk"
+        },
+        {
+          "op": "set",
+          "path": "kanaal",
+          "value": "$data.kanaal"
+        },
+        {
+          "op": "set",
+          "path": "melder",
+          "value": "$data.melder"
+        },
+        {
+          "op": "set",
+          "path": "status",
+          "value": "gemeld"
+        },
+        {
+          "op": "set",
+          "path": "gemeld",
+          "value": "$time"
+        }
+      ]
+    },
+    "nl.vng.meldingen.melding.toegewezen": {
+      "subjectType": "nl.vng.meldingen.melding",
+      "right": "write",
+      "dataschema": {
+        "type": "object",
+        "required": [
+          "team"
+        ],
+        "properties": {
+          "team": {
+            "type": "string"
+          }
+        }
+      },
+      "projection": [
+        {
+          "op": "set",
+          "path": "team",
+          "value": "$data.team"
+        },
+        {
+          "op": "set",
+          "path": "status",
+          "value": "toegewezen"
+        }
+      ]
+    },
+    "nl.vng.meldingen.melding.in_behandeling_genomen": {
+      "subjectType": "nl.vng.meldingen.melding",
+      "right": "write",
+      "dataschema": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "behandelaar": {
+            "type": "string"
+          }
+        }
+      },
+      "projection": [
+        {
+          "op": "set",
+          "path": "behandelaar",
+          "value": "$data.behandelaar"
+        },
+        {
+          "op": "set",
+          "path": "status",
+          "value": "in behandeling"
+        }
+      ]
+    },
+    "nl.vng.meldingen.melding.opgelost": {
+      "subjectType": "nl.vng.meldingen.melding",
+      "right": "write",
+      "dataschema": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "toelichting": {
+            "type": "string"
+          }
+        }
+      },
+      "projection": [
+        {
+          "op": "set",
+          "path": "status",
+          "value": "opgelost"
+        },
+        {
+          "op": "set",
+          "path": "opgelost",
+          "value": {
+            "door": "$actor",
+            "tijd": "$time",
+            "toelichting": "$data.toelichting"
+          }
+        }
+      ]
+    },
+    "nl.vng.meldingen.melding.heropend": {
+      "subjectType": "nl.vng.meldingen.melding",
+      "right": "append",
+      "dataschema": {
+        "type": "object",
+        "required": [
+          "reden"
+        ],
+        "properties": {
+          "reden": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "projection": [
+        {
+          "op": "set",
+          "path": "status",
+          "value": "heropend"
+        },
+        {
+          "op": "increment",
+          "path": "heropend"
+        }
+      ]
+    },
+    "nl.vng.meldingen.melding.afgesloten": {
+      "subjectType": "nl.vng.meldingen.melding",
+      "right": "write",
+      "dataschema": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "reden": {
+            "type": "string"
+          }
+        }
+      },
+      "projection": [
+        {
+          "op": "set",
+          "path": "status",
+          "value": "afgesloten"
+        },
+        {
+          "op": "set",
+          "path": "afgesloten",
+          "value": {
+            "door": "$actor",
+            "tijd": "$time",
+            "reden": "$data.reden"
+          }
+        }
+      ]
+    }
+  }
+}

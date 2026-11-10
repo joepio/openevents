@@ -1,0 +1,18 @@
+[package]
+name = "openevents-sim"
+description = "Sends a steady stream of semi-realistic events (meldingen, vergunningen, gesprekken) to an OpenEvents in dev mode"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "openevents-sim"
+path = "src/main.rs"
+
+[dependencies]
+serde_json.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+ureq = { version = "2", features = ["json"] }
+rand = "0.8"

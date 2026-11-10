@@ -55,7 +55,7 @@ Vertegenwoordiging werkt hetzelfde. Een gemachtigde staat als deelname met rol `
 2. De leesregel van het type wordt geparst bij het registreren van het profiel, en bij elke query wordt `actor()` ingevuld.
 3. De engine voert `filter van de client AND leesregel` uit, als één boom, met dezelfde indexen en grenzen. Dat gebeurt vóór paginering, dus tellingen, offsets en cursors lekken niets.
 4. De veldregel bepaalt de representatie, ook van elke `include`. Een verborgen veld ziet eruit als een veld zonder waarde.
-5. Filteren, sorteren en zoeken op een veld dat je niet mag zien, geeft dezelfde fout als een onbekend veld.
+5. Filteren, sorteren en zoeken op een veld dat je niet mag zien, geeft dezelfde fout als een onbekend veld. Hangt de veldregel af van het onderwerp (bijvoorbeeld "andere inwoners zien een melding zonder melder"), dan ziet het filter per onderwerp alleen de getoonde velden. Zo kun je met een filter niet raden wat er in een verborgen veld staat.
 
 Er wordt nooit tekst aan een query geplakt. Een regel kan niets uitdrukken wat de query-taal niet kan, en valt dus onder dezelfde grenzen.
 
