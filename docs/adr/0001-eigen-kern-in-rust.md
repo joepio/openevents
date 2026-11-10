@@ -13,7 +13,7 @@ Een nieuwe, kleine kern in Rust, die code en ideeën overneemt waar dat past.
 
 - **Rust**, voor snelheid, geheugengebruik en één binary.
 - **Uit ZaakChat:** JSON Commit (`commits.rs`), idempotentie, `previousCommit`, SSE met snapshot en deltas, projecties en heads.
-- **Uit atomic-server:** de vorm van de `KvStore`-trait, de index op omgekeerde verwijzingen, bewaakte query's, `before_commit`-plugins in WASM.
+- **Uit atomic-server:** de vorm van de `KvStore`-trait, de index op omgekeerde verwijzingen, bewaakte query's.
 
 ## Alternatieven
 

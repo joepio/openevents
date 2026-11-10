@@ -29,7 +29,8 @@ Elke fase eindigt met iets dat te laten zien is, en met de bijbehorende wijzigin
 
 ## Fase 3: Gesprekken als profiel (2 weken)
 
-- Profiel `nl.vng.gesprekken` met projectie, lees- en schrijfregels, automatisch antwoord en automatisch sluiten.
+- Profiel `nl.vng.gesprekken` met projectie en lees- en schrijfregels.
+- Consumers voor het automatische antwoord en het automatisch sluiten.
 - Dunne REST-laag die het Gesprekken-contract (lab PR #47) op events vertaalt.
 - Consumer voor klantcontact in Open Klant bij afsluiten.
 

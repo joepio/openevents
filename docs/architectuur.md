@@ -1,5 +1,15 @@
 # Architectuur
 
+## CQRS: OpenEvents is de leeskant
+
+De architectuur is CQRS met een eventlog ertussen.
+
+- **Commands** (beslissen of iets mag volgens de domeinregels) vallen **buiten** OpenEvents. Die zitten bij de bronnen: de Gesprekken API, OneGround, Open Zaak, een app, of een kleine domeinservice.
+- **Events** zijn feiten. OpenEvents neemt ze aan en controleert alleen wat nodig is om het log betrouwbaar te houden: schema, schrijfregel, idempotentie en `previousCommit`.
+- **Queries** en de stroom zijn de kern van OpenEvents: projecties, indexen, `/query`, views en SSE.
+
+Een profiel beschrijft hoe events eruitzien, hoe ze tot een stand leiden en wie wat mag zien, **maar niet wat er moet gebeuren**. Reacties op events (een automatisch antwoord, een gesprek sluiten na 3 dagen, een klantcontact aanmaken) zijn consumers die de stroom volgen en zelf events schrijven.
+
 ## Plaats in het landschap
 
 OpenEvents is een **register per domein** in de zin van [ADR-0006 van het lab](https://github.com/VNG-Realisatie/vng-api-lab/blob/main/architecture/adr/0006-per-domein-registers.md). Een gemeente of haar leverancier draait het, voor een domein zoals gesprekken of een tijdlijn bij zaken. Het is geen landelijke kluis.
@@ -64,11 +74,11 @@ Alle schrijfacties voor één transactie (log, projectie, indexen, head, idempot
 4. **Validatie.** Het `type` moet bij een geregistreerd profiel horen; `data` wordt gevalideerd tegen het `dataschema` (eis F11).
 5. **Beleid.** Komt het onderwerp door de `append`- of `write`-regel van het profiel voor deze agent? Dat is een query op dezelfde engine (zie [autorisatie](autorisatie.md)).
 6. **Concurrency.** Klopt `previousCommit` met `head`? Zo niet, 412.
-7. **Projectie.** De projectieregels van het profiel berekenen de nieuwe stand; ook de regels die afgeleide events maken (bijvoorbeeld een automatisch antwoord) draaien hier, binnen dezelfde transactie.
+7. **Projectie.** De projectieregels van het profiel berekenen de nieuwe stand. Projectie is puur: hij maakt geen nieuwe events en roept niets buiten het register aan.
 8. **Opslaan.** Eén batch.
 9. **Uitzenden.** Het event gaat naar de interne broadcast; elke SSE-verbinding filtert en autoriseert zelf.
 
-Neveneffecten buiten het register (een klantcontact in Open Klant, een e-mail) zijn **consumers**: ze volgen de stroom met een eigen cursor en doen hun werk at-least-once. Zo blijft de transactie klein en het register onafhankelijk van andere systemen.
+Alles wat een beslissing of neveneffect is (een automatisch antwoord, automatisch sluiten, een klantcontact in Open Klant, een e-mail) is een **consumer**: ze volgen de stroom met een eigen cursor en doen hun werk at-least-once. Zo blijft de transactie klein en het register onafhankelijk van andere systemen.
 
 ## Leespad
 

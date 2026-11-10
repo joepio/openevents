@@ -23,7 +23,7 @@ eventTypes:
   nl.vng.gesprekken.bijdrage.gelezen:      { dataschema: ".../gelezen.json",           right: append }
   nl.vng.gesprekken.deelname.toegevoegd:   { dataschema: ".../deelname.json",          right: write }
   nl.vng.gesprekken.gesprek.afgesloten:    { dataschema: ".../afgesloten.json",        right: append }
-projection: ./projecties/gesprek.wasm      # of een declaratieve reducer, zie hieronder
+projection: ./projecties/gesprek.yaml      # declaratief, zie hieronder
 rules: ./regels/gesprek.yaml          # read, append, write, fields; zie autorisatie.md
 views: [mijn-open-gesprekken, werkvoorraad-gesprekken]
 policies: [gesprekken-inwoner, gesprekken-medewerker]
@@ -31,14 +31,19 @@ policies: [gesprekken-inwoner, gesprekken-medewerker]
 
 ## Projectieregels
 
-Een projectie zet events om in de stand. Twee vormen:
+Een projectie zet events om in de stand, **declaratief**: "dit event zet veld X", "dit event voegt toe aan lijst Y", "dit event zet status op Z", "dit event telt op bij teller W". Projectie is puur. Hij maakt geen nieuwe events, kent geen tijd en roept niets buiten het register aan. Dat houdt de kern klein, maakt een projectie altijd opnieuw af te spelen, en past bij CQRS: het register is de leeskant (zie [architectuur](architectuur.md)).
 
-1. **Declaratief** voor het gewone werk: "dit event zet veld X", "dit event voegt toe aan lijst Y", "dit event zet status op Z". Dat dekt het meeste en is makkelijk te controleren.
-2. **Plugin** voor regels die meer vragen: een WASM-module met een vaste interface (`apply(state, event) -> (state, derivedEvents)`), met limieten op brandstof en geheugen. Dit is hetzelfde idee als `before_commit` in atomic-server.
+Past iets niet in de declaratieve vorm, dan is het meestal een domeinbeslissing en hoort het bij de commandkant.
 
-Afgeleide events (bijvoorbeeld het automatische antwoord "binnen 2 werkdagen") worden in dezelfde transactie toegevoegd, met `source` gelijk aan het register en een kenmerk `automatic: true`.
+## Reacties horen bij consumers
 
-Tijdsgestuurde regels (een gesprek sluit na 3 dagen zonder bijdrage van de gemeente) zijn een interne taak die het profiel declareert. De taak schrijft een gewoon event, zodat de geschiedenis compleet blijft.
+Regels die iets laten gebeuren, zijn geen onderdeel van het profiel maar kleine consumers naast het register. Ze volgen de stroom met een eigen cursor en schrijven gewone events terug:
+
+- het automatische antwoord "binnen 2 werkdagen" op een bijdrage van een inwoner, met `automatic: true`
+- een gesprek sluiten na 3 dagen zonder bijdrage van de gemeente
+- een klantcontact in Open Klant aanmaken bij afsluiten
+
+Een consumer is een gewone `$actor` met een eigen schrijfregel. Zo blijft de geschiedenis compleet, en is elk automatisch event te herleiden tot wie het schreef.
 
 ## Versies
 
@@ -55,8 +60,8 @@ Het eerste echte profiel wordt MijnGesprekken, omdat daar een werkende PoC ligt 
 | `GET /events` (SSE) | `GET /events` met filter op het profiel |
 | deelnames en rechten | projectie plus lees- en schrijfregels over `deelnames.partij` en `zaaktype.team.leden` |
 | gelezen | event `bijdrage.gelezen`, projectieveld `ongelezen` per deelnemer |
-| automatisch antwoord | afgeleid event in de projectieregel |
-| automatisch sluiten na 3 dagen | tijdsgestuurde regel |
+| automatisch antwoord | consumer die op `bijdrage.toegevoegd` reageert |
+| automatisch sluiten na 3 dagen | consumer met een timer |
 | klantcontact bij afsluiten | consumer die `gesprek.afgesloten` volgt en Open Klant aanroept |
 | bijlagen | `dataref` naar het file-upload-pattern |
 | bewaartermijn volgt de zaak | `retention.followsReference` |

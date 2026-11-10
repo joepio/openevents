@@ -40,6 +40,6 @@ Tijdens het fieldlab MijnGesprekken (10 november 2026) bleek er belangstelling v
 OpenEvents leent van twee bestaande projecten:
 
 - **[ZaakChat](https://github.com/joepio/zaakchat):** JSON Commit op `POST /events`, SSE met snapshot en deltas, projecties naast het log, schema-endpoints, één binary zonder externe database.
-- **Atomic Data / atomic-server:** schema's als data, een `KvStore`-trait, een index op verwijzingen, plugins met `before_commit`-hooks.
+- **Atomic Data / atomic-server:** schema's als data, een `KvStore`-trait, een index op verwijzingen, bewaakte query's.
 
 Zie [ADR-0001](docs/adr/0001-eigen-kern-in-rust.md) voor waarom het een eigen kern wordt en geen uitbreiding van een van beide.
