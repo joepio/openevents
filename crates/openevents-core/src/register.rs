@@ -496,7 +496,8 @@ impl Register {
         let mut list: Vec<_> = ps
             .by_id
             .values()
-            .map(|p| json!({ "id": p.id, "version": p.version, "types": p.types.keys().collect::<Vec<_>>(), "actions": p.actions.keys().collect::<Vec<_>>() }))
+            .map(|p| json!({ "id": p.id, "version": p.version, "types": p.types.keys().collect::<Vec<_>>(), "actions": p.actions.keys().collect::<Vec<_>>(),
+                "standalone": p.types.iter().filter(|(_, t)| !t.part_of).map(|(n, _)| n).collect::<Vec<_>>() }))
             .collect();
         list.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
         list
@@ -580,6 +581,83 @@ impl Register {
             }
         }
         Ok(out)
+    }
+
+    /// What refers to this subject (one level), as this actor may see it: resources
+    /// whose reference field (`references` in the profile) holds the subject's id. A
+    /// reference the actor may not filter on is skipped, so this never shows more than
+    /// a query could.
+    pub fn related(&self, actor: &Actor, subject: &str) -> Result<Vec<Value>, RegisterError> {
+        if !self.may_read_subject(subject, actor)? {
+            return Err(RegisterError::NotFound);
+        }
+        let mut refs: Vec<(String, String)> = {
+            let ps = self.profiles.read().unwrap();
+            ps.by_id
+                .values()
+                .flat_map(|p| {
+                    p.types.iter().flat_map(|(name, t)| {
+                        t.references.iter().map(move |r| (name.clone(), r.clone()))
+                    })
+                })
+                .collect()
+        };
+        refs.sort();
+        let mut out = Vec::new();
+        for (type_name, field) in refs {
+            let req = QueryRequest {
+                type_name,
+                filter: Some(json!({ "op": "=", "args": [ { "property": field }, subject ] })),
+                fields: None,
+                page_size: Some(MAX_PAGE),
+                cursor: None,
+            };
+            if let Ok(v) = self.query(actor, &req) {
+                if let Some(list) = v["results"].as_array() {
+                    out.extend(list.iter().cloned());
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// The audit trail of a subject: its own events and those of everything that
+    /// refers to it, two levels deep (a zaak, its gesprekken, their bijdragen), in log
+    /// order. Read rules and field rules apply to every event, as on the stream.
+    pub fn audit(&self, actor: &Actor, subject: &str) -> Result<Value, RegisterError> {
+        if !self.may_read_subject(subject, actor)? {
+            return Err(RegisterError::NotFound);
+        }
+        let mut subjects = vec![subject.to_string()];
+        let mut frontier = vec![subject.to_string()];
+        for _ in 0..2 {
+            let mut next = Vec::new();
+            for s in &frontier {
+                for r in self.related(actor, s)? {
+                    if let Some(id) = r["_meta"]["subject"].as_str() {
+                        if !subjects.iter().any(|x| x == id) && subjects.len() < 200 {
+                            subjects.push(id.to_string());
+                            next.push(id.to_string());
+                        }
+                    }
+                }
+            }
+            frontier = next;
+        }
+        let mut events = Vec::new();
+        for s in &subjects {
+            if let Ok(list) = self.timeline(actor, s, 0, MAX_PAGE) {
+                events.extend(list);
+            }
+        }
+        let seq = |e: &Value| {
+            e["sequence"]
+                .as_str()
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0)
+        };
+        events.sort_by_key(seq);
+        Ok(json!({ "subjects": subjects, "events": events }))
     }
 
     /// Events after a sequence number that this actor may read, plus the last sequence

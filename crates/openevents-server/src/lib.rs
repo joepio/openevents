@@ -41,6 +41,8 @@ pub fn router(state: AppState) -> Router {
         .route("/notificaties", post(post_notificatie))
         .route("/subjects/{subject}", get(get_subject))
         .route("/subjects/{subject}/events", get(get_timeline))
+        .route("/subjects/{subject}/related", get(get_related))
+        .route("/subjects/{subject}/audit", get(get_audit))
         .route("/query", post(post_query))
         .route("/profiles", get(list_profiles))
         .route("/profiles/{id}", get(get_profile).put(put_profile))
@@ -411,6 +413,36 @@ async fn get_subject(
         Err(r) => return r,
     };
     match state.register.get_subject(&actor, &subject) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+async fn get_related(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(subject): Path<String>,
+) -> Response {
+    let actor = match actor(&state, &headers).await {
+        Ok(a) => a,
+        Err(r) => return r,
+    };
+    match state.register.related(&actor, &subject) {
+        Ok(results) => Json(json!({ "results": results })).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+async fn get_audit(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(subject): Path<String>,
+) -> Response {
+    let actor = match actor(&state, &headers).await {
+        Ok(a) => a,
+        Err(r) => return r,
+    };
+    match state.register.audit(&actor, &subject) {
         Ok(v) => Json(v).into_response(),
         Err(e) => error_response(e),
     }

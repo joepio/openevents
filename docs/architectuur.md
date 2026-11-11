@@ -96,6 +96,8 @@ Alles wat een beslissing of neveneffect is (een automatisch antwoord, automatisc
 | `GET` | `/events` | volgen (SSE) of pagineren (JSON) |
 | `POST` | `/events/tickets` | kortlevend ticket voor SSE vanuit de browser |
 | `GET` | `/subjects/{subject}/events` | tijdlijn van één onderwerp |
+| `GET` | `/subjects/{subject}/related` | wat naar dit onderwerp verwijst, met de leesregels van de lezer |
+| `GET` | `/subjects/{subject}/audit` | wie deed wat, over het onderwerp en alles wat ernaar verwijst |
 | `GET` | `/subjects/{subject}` | stand van één resource |
 | `POST`, `QUERY` | `/query` | bevragen |
 | `GET` | `/views/{naam}` | benoemde representatie, met alleen niet-gevoelige parameters |

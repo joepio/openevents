@@ -62,7 +62,8 @@ h2 { font-size: 14px; margin: 0 0 8px; }
 <header>
   <h1>OpenEvents</h1>
   <nav id="tabs">
-    <button data-tab="stand" class="active">Stand</button>
+    <button data-tab="overzicht" class="active">Overzicht</button>
+    <button data-tab="stand">Stand</button>
     <button data-tab="events">Events</button>
     <button data-tab="query">Query</button>
     <button data-tab="schrijven">Schrijven</button>
@@ -74,7 +75,30 @@ h2 { font-size: 14px; margin: 0 0 8px; }
 </header>
 <main>
 
-<section id="tab-stand">
+<section id="tab-overzicht">
+  <div class="grid">
+    <div class="panel">
+      <div class="row"><h2 style="margin:0">Overzicht</h2><span class="spacer"></span><span id="ov-live" class="badge">niet live</span></div>
+      <p class="muted" style="margin-top:0">Alles wat deze persona volledig mag zien, over alle profielen heen: taken, zaken, aanvragen, meldingen en gesprekken. Het ververst live.</p>
+      <div id="ov-groups"></div>
+      <span id="ov-status" class="status muted"></span>
+    </div>
+    <div class="panel">
+      <h2 id="zk-title" class="muted">Kies iets uit het overzicht</h2>
+      <div id="zk-body" class="hidden">
+        <details><summary class="muted">stand</summary><pre class="json" id="zk-state"></pre></details>
+        <h2 style="margin-top:12px">Hoort erbij</h2>
+        <table><tbody id="zk-related"></tbody></table>
+        <h2 style="margin-top:12px">Audit: wie deed wat</h2>
+        <p class="muted" style="margin-top:0">De events van dit onderwerp en van alles wat ernaar verwijst, twee lagen diep, met dezelfde leesregels als overal.</p>
+        <table><thead><tr><th>tijd</th><th>wie</th><th>handeling</th><th>waarop</th></tr></thead><tbody id="zk-audit"></tbody></table>
+        <pre class="json hidden" id="zk-event" style="margin-top:8px"></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="tab-stand" class="hidden">
   <div class="panel">
     <div class="row">
       <select id="stand-type"></select>
@@ -223,6 +247,107 @@ function summary(obj) {
   return out.join(" · ");
 }
 
+// ---------- overzicht ----------
+const GROUPS = { taak: "Taken", zaak: "Zaken", aanvraag: "Aanvragen", melding: "Meldingen", gesprek: "Gesprekken", notitie: "Notities" };
+const ORDER = ["taak", "zaak", "aanvraag", "melding", "gesprek", "notitie"];
+const short = (type) => (type || "").split(".").pop();
+function label(item) {
+  for (const k of ["titel", "onderwerp", "zaaknummer", "identificatie", "omschrijving", "categorie", "tekst"]) if (typeof item[k] === "string" && item[k]) return item[k];
+  return item._meta ? item._meta.subject : "";
+}
+function who(a) {
+  if (!a) return "";
+  const p = state.personas.find(x => x.id === a);
+  if (p) return p.label.split(" (")[0];
+  const last = a.split(/[/:]/).pop();
+  return last ? last.charAt(0).toUpperCase() + last.slice(1) : a;
+}
+function detail(item) {
+  const v = [item.subcategorie || item.categorie, item.omschrijving].find(x => typeof x === "string" && x && x !== label(item));
+  return v ? (v.length > 70 ? v.slice(0, 70) + "…" : v) : "";
+}
+function statusBadge(item) {
+  const st = item.status || (item.einddatum ? "afgesloten" : "");
+  if (!st || typeof st !== "string" || st.startsWith("http")) return null;
+  const done = ["afgerond", "afgehandeld", "besloten", "afgesloten", "ingetrokken", "vervallen"].includes(st);
+  return el("span", { class: "badge " + (done ? "ok" : "warn") }, st);
+}
+const when = (t) => (t || "").replace("T", " ").slice(0, 16);
+const ov = { stream: null, timer: null, selected: null, labels: {} };
+
+async function overzicht() {
+  const types = state.types.filter(t => state.standalone.includes(t.name));
+  types.sort((a, b) => (ORDER.indexOf(short(a.name)) + 99) % 99 - (ORDER.indexOf(short(b.name)) + 99) % 99);
+  const results = await Promise.all(types.map(t => api("POST", "/query", { type: t.name, pageSize: 100 })));
+  const box = $("ov-groups"); box.textContent = "";
+  let total = 0, cursor = null;
+  results.forEach((r, i) => {
+    if (!r.ok) return;
+    cursor = cursor || r.data.feedCursor;
+    const items = r.data.results.filter(x => !x._meta.limited);
+    if (!items.length) return;
+    items.sort((a, b) => (b._meta.updated || "").localeCompare(a._meta.updated || ""));
+    total += items.length;
+    const name = short(types[i].name);
+    const rows = el("tbody");
+    for (const item of items) {
+      ov.labels[item._meta.subject] = label(item);
+      const tr = el("tr", { class: "click", onclick: () => openZaak(item._meta.subject) },
+        el("td", {}, label(item), detail(item) ? el("div", { class: "muted" }, detail(item)) : null), el("td", {}, statusBadge(item)), el("td", { class: "muted" }, when(item._meta.updated)));
+      tr.dataset.subject = item._meta.subject;
+      if (item._meta.subject === ov.selected) tr.classList.add("selected");
+      rows.append(tr);
+    }
+    box.append(el("h2", { style: "margin-top:12px" }, (GROUPS[name] || name) + " ", el("span", { class: "muted" }, String(items.length))), el("table", {}, rows));
+  });
+  setStatus("ov-status", total ? "" : "Niets gevonden voor deze persona. Kies een inwoner of medewerker rechtsboven.");
+  return cursor;
+}
+
+async function openZaak(subject) {
+  ov.selected = subject;
+  for (const tr of document.querySelectorAll("#ov-groups tr")) tr.classList.toggle("selected", tr.dataset.subject === subject);
+  const enc = encodeURIComponent(subject);
+  const [s, rel, au] = await Promise.all([api("GET", "/subjects/" + enc), api("GET", "/subjects/" + enc + "/related"), api("GET", "/subjects/" + enc + "/audit")]);
+  if (!s.ok) { $("zk-title").textContent = "Niet zichtbaar voor deze persona"; $("zk-body").classList.add("hidden"); return; }
+  $("zk-title").textContent = label(s.data); $("zk-title").className = "";
+  $("zk-body").classList.remove("hidden");
+  renderJson($("zk-state"), s.data);
+  ov.labels[subject] = label(s.data);
+  const rows = $("zk-related"); rows.textContent = "";
+  for (const item of (rel.ok ? rel.data.results : [])) {
+    ov.labels[item._meta.subject] = label(item);
+    rows.append(el("tr", { class: "click", onclick: () => openZaak(item._meta.subject) },
+      el("td", { class: "muted" }, short(item._meta.type)), el("td", {}, label(item)), el("td", {}, statusBadge(item))));
+  }
+  if (!rows.children.length) rows.append(el("tr", {}, el("td", { class: "muted" }, "Niets dat je mag zien.")));
+  const audit = $("zk-audit"); audit.textContent = ""; $("zk-event").classList.add("hidden");
+  for (const ev of (au.ok ? au.data.events : []).slice().reverse()) {
+    const rd = ev.data && ev.data.resourceData;
+    const what = ov.labels[ev.subject] || (rd && label(rd)) || short(ev.data && ev.data.type) || ev.subject;
+    if (rd && label(rd)) ov.labels[ev.subject] = label(rd);
+    audit.append(el("tr", { class: "click", onclick: () => { $("zk-event").classList.remove("hidden"); renderJson($("zk-event"), ev); } },
+      el("td", { class: "muted", style: "white-space:nowrap" }, when(ev.time)), el("td", {}, who(ev.actor)),
+      el("td", {}, ev.type.split(".").slice(-2).join(" ").replace(/_/g, " ")),
+      el("td", {}, what, ev.dataHidden ? " " : "", ev.dataHidden ? el("span", { class: "badge warn" }, "data verborgen") : null)));
+  }
+}
+
+async function overzichtLive() {
+  if (ov.stream) { ov.stream.close(); ov.stream = null; }
+  const cursor = await overzicht();
+  const t = await api("POST", "/events/tickets");
+  if (!t.ok) { $("ov-live").textContent = "niet live"; $("ov-live").className = "badge"; return; }
+  const es = new EventSource("/events?" + new URLSearchParams({ ticket: t.data.ticket, after: cursor || "0" }));
+  ov.stream = es;
+  es.onopen = () => { $("ov-live").textContent = "live"; $("ov-live").className = "badge ok"; };
+  es.onmessage = () => {
+    clearTimeout(ov.timer);
+    ov.timer = setTimeout(() => { overzicht(); if (ov.selected) openZaak(ov.selected); }, 800);
+  };
+  es.onerror = () => { es.close(); $("ov-live").textContent = "niet live"; $("ov-live").className = "badge"; if (ov.stream === es) setTimeout(overzichtLive, 3000); };
+}
+
 // ---------- tabs ----------
 $("tabs").addEventListener("click", (e) => {
   const tab = e.target.dataset && e.target.dataset.tab;
@@ -230,6 +355,7 @@ $("tabs").addEventListener("click", (e) => {
   for (const b of document.querySelectorAll("#tabs button")) b.classList.toggle("active", b.dataset.tab === tab);
   for (const s of document.querySelectorAll("main > section")) s.classList.toggle("hidden", s.id !== "tab-" + tab);
   store("tab", tab);
+  if (tab === "overzicht") overzichtLive(); else if (ov.stream) { ov.stream.close(); ov.stream = null; }
 });
 
 // ---------- personas ----------
@@ -239,6 +365,7 @@ function onPersonaChange() {
   store("persona", id);
   $("w-as").textContent = state.persona ? state.persona.label.split(" (")[0] : "token";
   if (state.stream) connectEvents();
+  if (ov.stream || store("tab") === "overzicht" || !store("tab")) { ov.selected = null; $("zk-body").classList.add("hidden"); $("zk-title").textContent = "Kies iets uit het overzicht"; $("zk-title").className = "muted"; overzichtLive(); }
   if (!$("stand-detail").classList.contains("hidden") && state.selected) openSubject(state.selected);
   zoek();
 }
@@ -410,8 +537,9 @@ $("w-send").addEventListener("click", async () => {
 async function loadProfiles() {
   const r = await api("GET", "/profiles");
   state.profiles = [];
-  state.types = []; state.eventTypes = [];
+  state.types = []; state.eventTypes = []; state.standalone = [];
   for (const p of r.data.profiles) {
+    state.standalone.push(...(p.standalone || []));
     const full = await api("GET", "/profiles/" + encodeURIComponent(p.id));
     state.profiles.push(full.data);
     for (const [name, def] of Object.entries(full.data.types || {})) state.types.push({ name, def, profile: p.id });
@@ -453,7 +581,8 @@ async function init() {
   await loadProfiles();
   newSubject(); fillWrite();
   const tab = store("tab");
-  if (tab) { const b = document.querySelector('#tabs button[data-tab="' + tab + '"]'); if (b) b.click(); }
+  const b = document.querySelector('#tabs button[data-tab="' + (tab || "overzicht") + '"]');
+  if (b) b.click(); else overzichtLive();
   zoek();
 }
 init();

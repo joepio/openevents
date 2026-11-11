@@ -79,6 +79,7 @@ async fn install(app: &Router) {
         ("nl.example.notities", "notities"),
         ("nl.vng.meldingen", "meldingen"),
         ("nl.vng.vergunningen", "vergunningen"),
+        ("nl.vng.taken", "taken"),
     ] {
         let (s, _, _) = call(
             app,
@@ -159,7 +160,7 @@ async fn profiles_need_an_admin() {
     assert_eq!(s, StatusCode::UNAUTHORIZED);
     install(&app).await;
     let (_, b, _) = call(&app, "GET", "/profiles", None, None).await;
-    assert_eq!(b["profiles"].as_array().unwrap().len(), 4);
+    assert_eq!(b["profiles"].as_array().unwrap().len(), 5);
 }
 
 #[tokio::test]
@@ -1056,4 +1057,133 @@ async fn batch_and_openapi() {
     assert!(o["paths"]["/events"]["post"]["requestBody"]["content"]
         ["application/cloudevents-batch+json"]
         .is_object());
+}
+
+/// A zaak overview: what refers to an aanvraag (a taak, a gesprek and its bijdrage),
+/// and one audit trail over all of it, each with the reader's own rules.
+#[tokio::test]
+async fn related_and_audit_follow_references() {
+    let app = app();
+    install(&app).await;
+    let olo = "dev:https://id.example.nl/omgevingsloket|rol=systeem";
+    let jan = "dev:https://id.example.nl/jan|rol=inwoner";
+    let jan_id = "https://id.example.nl/jan";
+    let femke = "dev:https://id.example.nl/femke|rol=medewerker|team=vergunningen";
+    let femke_id = "https://id.example.nl/femke";
+    let zaak = "https://zaken.demodam.nl/vergunningen/OV-1";
+    let g = "urn:uuid:gesprek-ov-1";
+    for (token, e) in [
+        (
+            olo,
+            ev(
+                "v1",
+                "nl.vng.vergunningen.aanvraag.ingediend",
+                zaak,
+                json!({ "resourceData": {
+            "zaaknummer": "OV-1", "activiteiten": ["bouwen"], "omschrijving": "Dakkapel",
+            "aanvrager": { "partij": jan_id, "rol": "aanvrager" } } }),
+            ),
+        ),
+        (
+            femke,
+            ev(
+                "v2",
+                "nl.vng.taken.taak.aangemaakt",
+                "urn:uuid:taak-1",
+                json!({ "resourceData": {
+            "titel": "Lever de constructietekening aan", "zaak": zaak, "voor": { "partij": jan_id }, "team": "vergunningen" } }),
+            ),
+        ),
+        (
+            femke,
+            ev(
+                "v3",
+                "nl.vng.gesprekken.gesprek.gestart",
+                g,
+                json!({ "type": "nl.vng.gesprekken.gesprek", "resourceData": {
+            "onderwerp": "Aanvulling nodig voor OV-1", "team": "vergunningen", "aanleiding": { "zaak": zaak },
+            "deelnames": [ { "partij": femke_id, "rol": "behandelaar" }, { "partij": jan_id, "rol": "inwoner" } ] } }),
+            ),
+        ),
+        (
+            jan,
+            ev(
+                "v4",
+                "nl.vng.gesprekken.bijdrage.toegevoegd",
+                "urn:uuid:b-ov-1",
+                json!({ "resourceData": {
+            "gesprek": g, "tekst": "Komt eraan." } }),
+            ),
+        ),
+        (
+            jan,
+            ev(
+                "v5",
+                "nl.vng.taken.taak.afgerond",
+                "urn:uuid:taak-1",
+                json!({ "patch": {} }),
+            ),
+        ),
+    ] {
+        let (s, b, _) = call(&app, "POST", "/events", Some(token), Some(e)).await;
+        assert_eq!(s, StatusCode::CREATED, "{b}");
+    }
+    let uri = |what: &str| format!("/subjects/{}/{what}", enc(zaak));
+
+    let (s, b, _) = call(&app, "GET", &uri("related"), Some(jan), None).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let mut types: Vec<&str> = b["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["_meta"]["type"].as_str().unwrap())
+        .collect();
+    types.sort();
+    assert_eq!(types, ["nl.vng.gesprekken.gesprek", "nl.vng.taken.taak"]);
+
+    // The audit trail goes two levels deep: the bijdrage in the gesprek is in it.
+    let (_, b, _) = call(&app, "GET", &uri("audit"), Some(jan), None).await;
+    let ids: Vec<&str> = b["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["v1", "v2", "v3", "v4", "v5"]);
+    assert_eq!(b["events"][4]["actor"], jan_id);
+
+    // The KCC sees the zaak limited and not the bijdrage at all.
+    let (_, b, _) = call(&app, "GET", &uri("audit"), Some(KIM), None).await;
+    let ids: Vec<&str> = b["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["id"].as_str().unwrap())
+        .collect();
+    assert!(!ids.contains(&"v4"), "{ids:?}");
+    assert!(b["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|e| e.get("data").is_none()));
+    // A stranger gets nothing, not even that it exists.
+    let (s, _, _) = call(&app, "GET", &uri("related"), Some(KAREL), None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+
+    // The profile list says which types stand on their own (for an overview).
+    let (_, b, _) = call(&app, "GET", "/profiles", None, None).await;
+    let standalone: Vec<String> = b["profiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|p| {
+            p["standalone"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|t| t.as_str().unwrap().to_string())
+        })
+        .collect();
+    assert!(standalone.contains(&"nl.vng.taken.taak".to_string()));
+    assert!(!standalone.contains(&"nl.vng.gesprekken.bijdrage".to_string()));
 }

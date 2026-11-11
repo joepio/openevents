@@ -89,6 +89,13 @@ Een handeling met meerdere commits is één transactie: "gesprek starten" maakt 
 
 Een regel of filter mag een verwijzing volgen: in `gesprek.deelnames.partij` is `gesprek` een veld met de id van een andere resource, en het register leest die resource. Regels in het profiel zien alles. Een filter van een client volgt een verwijzing alleen als de lezer die resource zelf mag lezen, en ziet daarvan alleen de velden die hij mag zien. Een pad volgt hooguit drie verwijzingen.
 
+Een type noemt zijn verwijzingen in `references` (bijvoorbeeld `["gesprek"]` bij een bijdrage, `["zaak"]` bij een taak of een ZGW-status). Daarop kun je altijd filteren, en het register gebruikt ze voor twee leesvragen:
+
+- `GET /subjects/{subject}/related`: alles wat naar dit onderwerp verwijst (de gesprekken, taken en aanvullingen bij een zaak);
+- `GET /subjects/{subject}/audit`: één tijdlijn van wie wat wanneer deed, over het onderwerp en alles wat ernaar verwijst, twee lagen diep (de zaak, het gesprek erover, de bijdragen daarin).
+
+Beide volgen de leesregels van de lezer, net als `/query` en de stroom: een inwoner ziet de bijdragen in zijn gesprek, het KCC ziet dat er iets gebeurde maar niet wat. Is de verwijzing verplicht in het schema, dan hoort het type bij iets anders (een bijdrage bij een gesprek); de andere types staan op zichzelf en komen in een overzicht (`standalone` in `GET /profiles`). Het tabblad Overzicht in `/ui` laat dat per persona zien: taken, zaken, aanvragen, meldingen en gesprekken, live, met per onderwerp wat erbij hoort en de audit.
+
 ### Lijsten
 
 Een lijst die groeit (bijdragen, statussen, aanvullingen, adviezen) wordt een eigen resource met een verwijzing naar zijn ouder. Dat geeft minder conflicten, kleinere events en wissen per resource. Een kleine lijst die zelden verandert (deelnames) blijft een veld. De client stuurt dan de hele lijst, met `previousCommit` tegen gelijktijdig schrijven.

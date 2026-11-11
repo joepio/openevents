@@ -107,7 +107,7 @@ curl -s localhost:8080/query -H "$T" -H 'content-type: application/json' \
 - `POST /events`: elk event is een commit (`resourceData`, `patch` of `deleted`) en het type benoemt de handeling uit het profiel; meerdere commits in `data.commits`, alles of niets; idempotent op `source` + `id`, `previousCommit` met 412
 - profielen tijdens runtime (`PUT /profiles/{id}`): types (JSON Schema, regels, velden per rol) en handelingen (welke commits, welke velden, wat de server zet, wie het mag); regels en filters volgen verwijzingen (`gesprek.status`)
 - lees-, maak-, schrijf- en toevoegregels in CQL2-tekst of CQL2-JSON (`=`, `<>`, `<`, `<=`, `>`, `>=`, `IN`, `IS NULL`, `AND`, `OR`, `NOT`, `actor()`, `actor('claim')`)
-- `GET /events` als SSE (`Last-Event-ID`, tickets) of JSON, `GET /subjects/{subject}`, `GET /subjects/{subject}/events`
+- `GET /events` als SSE (`Last-Event-ID`, tickets) of JSON, `GET /subjects/{subject}`, `GET /subjects/{subject}/events`, `/related` (wat ernaar verwijst) en `/audit` (wie deed wat, over de zaak en alles eromheen)
 - veldregels (`rules.fields` met `when` en `show`): wie een subject alleen beperkt mag zien, krijgt alleen de genoemde velden en events zonder `data` (`dataHidden: true`)
 - persona's in profielen en een beheer-UI op `/ui`
 - OIDC: tokens van een IdP via JWKS (discovery, sleutelrotatie), naast HS256 en dev-tokens

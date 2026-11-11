@@ -109,7 +109,10 @@
         "read": "zaak.zaaktype = actor('zaaktypen') OR actor('rol') IN ('systeem', 'kcc') OR zaak.initiatorBsn = actor('bsn')",
         "write": "actor('rol') = 'systeem'",
         "create": "actor('rol') = 'systeem'"
-      }
+      },
+      "references": [
+        "zaak"
+      ]
     },
     "nl.vng.zgw.rol": {
       "queryable": [
@@ -136,7 +139,10 @@
         "read": "zaak.zaaktype = actor('zaaktypen') OR actor('rol') IN ('systeem') OR zaak.initiatorBsn = actor('bsn')",
         "write": "actor('rol') = 'systeem'",
         "create": "actor('rol') = 'systeem'"
-      }
+      },
+      "references": [
+        "zaak"
+      ]
     },
     "nl.vng.zgw.resultaat": {
       "queryable": [
@@ -162,7 +168,10 @@
         "read": "zaak.zaaktype = actor('zaaktypen') OR actor('rol') IN ('systeem', 'kcc') OR zaak.initiatorBsn = actor('bsn')",
         "write": "actor('rol') = 'systeem'",
         "create": "actor('rol') = 'systeem'"
-      }
+      },
+      "references": [
+        "zaak"
+      ]
     },
     "nl.vng.zgw.zaakinformatieobject": {
       "queryable": [
@@ -188,7 +197,10 @@
         "read": "zaak.zaaktype = actor('zaaktypen') OR actor('rol') IN ('systeem', 'kcc') OR zaak.initiatorBsn = actor('bsn')",
         "write": "actor('rol') = 'systeem'",
         "create": "actor('rol') = 'systeem'"
-      }
+      },
+      "references": [
+        "zaak"
+      ]
     },
     "nl.vng.zgw.zaakobject": {
       "queryable": [
@@ -215,7 +227,10 @@
         "read": "zaak.zaaktype = actor('zaaktypen') OR actor('rol') IN ('systeem', 'kcc') OR zaak.initiatorBsn = actor('bsn')",
         "write": "actor('rol') = 'systeem'",
         "create": "actor('rol') = 'systeem'"
-      }
+      },
+      "references": [
+        "zaak"
+      ]
     }
   },
   "actions": {

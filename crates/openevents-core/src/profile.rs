@@ -36,6 +36,12 @@ pub struct SubjectType {
     pub fields: Vec<FieldRule>,
     pub schema: Option<jsonschema::Validator>,
     pub queryable: Option<Vec<String>>,
+    /// Fields that hold the id of another resource (its parent, its zaak). Used to
+    /// find what refers to a resource, for a zaak overview and its audit trail.
+    pub references: Vec<String>,
+    /// A type whose reference is required is part of something else (a bijdrage of a
+    /// gesprek); the others stand on their own and show up in an overview.
+    pub part_of: bool,
     pub allow_commits: bool,
     pub rules: Rules,
 }
@@ -161,20 +167,48 @@ impl Profile {
                         fields.push(FieldRule { when, show });
                     }
                 }
+                let references: Vec<String> = def
+                    .get("references")
+                    .and_then(|r| r.as_array())
+                    .map(|r| {
+                        r.iter()
+                            .filter_map(|s| s.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let required: Vec<&str> = def
+                    .get("schema")
+                    .and_then(|s| s.get("required"))
+                    .and_then(|r| r.as_array())
+                    .map(|r| r.iter().filter_map(|v| v.as_str()).collect())
+                    .unwrap_or_default();
+                let part_of = references.iter().any(|r| required.contains(&r.as_str()));
+                let mut queryable: Option<Vec<String>> =
+                    def.get("queryable").and_then(|q| q.as_array()).map(|q| {
+                        q.iter()
+                            .filter_map(|s| s.as_str().map(String::from))
+                            .collect()
+                    });
+                // A reference can always be filtered on.
+                if let Some(q) = queryable.as_mut() {
+                    for r in &references {
+                        if !q.contains(r) {
+                            q.push(r.clone());
+                        }
+                    }
+                }
                 types.insert(
                     name.clone(),
                     SubjectType {
                         name: name.clone(),
                         fields,
+                        references,
+                        part_of,
                         schema: def
                             .get("schema")
                             .map(|s| compile_schema(s, &at))
                             .transpose()?,
-                        queryable: def.get("queryable").and_then(|q| q.as_array()).map(|q| {
-                            q.iter()
-                                .filter_map(|s| s.as_str().map(String::from))
-                                .collect()
-                        }),
+                        queryable,
                         allow_commits: def
                             .get("allowCommits")
                             .and_then(|b| b.as_bool())

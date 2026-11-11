@@ -141,7 +141,10 @@
             ]
           }
         ]
-      }
+      },
+      "references": [
+        "aanleiding.zaak"
+      ]
     },
     "nl.vng.gesprekken.bijdrage": {
       "queryable": [
@@ -179,7 +182,10 @@
       },
       "rules": {
         "read": "gesprek.deelnames.partij = actor() OR gesprek.team = actor('team')"
-      }
+      },
+      "references": [
+        "gesprek"
+      ]
     }
   },
   "actions": {

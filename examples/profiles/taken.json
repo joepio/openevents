@@ -1,0 +1,169 @@
+{
+  "id": "nl.vng.taken",
+  "version": "0.1.0",
+  "title": "Taken voor de inwoner (simulatievoorbeeld, naar MijnTaken)",
+  "personas": [
+    {
+      "id": "https://id.example.nl/jan",
+      "label": "Jan (inwoner, aanvrager)",
+      "claims": {
+        "rol": "inwoner"
+      }
+    },
+    {
+      "id": "https://id.example.nl/femke",
+      "label": "Femke (vergunningverlener)",
+      "claims": {
+        "rol": "medewerker",
+        "team": "vergunningen"
+      }
+    }
+  ],
+  "types": {
+    "nl.vng.taken.taak": {
+      "queryable": [
+        "status",
+        "voor.partij",
+        "team",
+        "deadline",
+        "zaak"
+      ],
+      "references": [
+        "zaak"
+      ],
+      "schema": {
+        "type": "object",
+        "required": [
+          "titel",
+          "status",
+          "voor"
+        ],
+        "properties": {
+          "titel": {
+            "type": "string",
+            "minLength": 1
+          },
+          "toelichting": {
+            "type": "string"
+          },
+          "zaak": {
+            "type": "string"
+          },
+          "voor": {
+            "type": "object",
+            "required": [
+              "partij"
+            ],
+            "properties": {
+              "partij": {
+                "type": "string"
+              }
+            }
+          },
+          "team": {
+            "type": "string"
+          },
+          "deadline": {
+            "type": "string",
+            "format": "date"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "afgerond",
+              "vervallen"
+            ]
+          },
+          "aangemaakt": {
+            "type": "string"
+          },
+          "afgerond": {
+            "type": "object",
+            "properties": {
+              "door": {
+                "type": "string"
+              },
+              "tijd": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "rules": {
+        "read": "voor.partij = actor() OR team = actor('team') OR actor('rol') IN ('kcc', 'systeem')",
+        "create": "team = actor('team') OR actor('rol') = 'systeem'",
+        "write": "team = actor('team') OR actor('rol') = 'systeem'",
+        "fields": [
+          {
+            "when": "actor('rol') = 'kcc'",
+            "show": [
+              "titel",
+              "zaak",
+              "status",
+              "deadline",
+              "aangemaakt"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "actions": {
+    "nl.vng.taken.taak.aangemaakt": {
+      "title": "Taak klaarzetten",
+      "commits": [
+        {
+          "type": "nl.vng.taken.taak",
+          "op": "create",
+          "fields": [
+            "titel",
+            "toelichting",
+            "zaak",
+            "voor",
+            "team",
+            "deadline"
+          ],
+          "set": {
+            "status": "open",
+            "aangemaakt": "$time"
+          }
+        }
+      ]
+    },
+    "nl.vng.taken.taak.afgerond": {
+      "title": "Taak afronden",
+      "commits": [
+        {
+          "type": "nl.vng.taken.taak",
+          "op": "update",
+          "fields": [],
+          "set": {
+            "status": "afgerond",
+            "afgerond": {
+              "door": "$actor",
+              "tijd": "$time"
+            }
+          },
+          "rule": "(voor.partij = actor() OR team = actor('team') OR actor('rol') = 'systeem') AND status = 'open'"
+        }
+      ]
+    },
+    "nl.vng.taken.taak.vervallen": {
+      "title": "Taak laten vervallen",
+      "commits": [
+        {
+          "type": "nl.vng.taken.taak",
+          "op": "update",
+          "fields": [
+            "toelichting"
+          ],
+          "set": {
+            "status": "vervallen"
+          },
+          "rule": "team = actor('team') AND status = 'open'"
+        }
+      ]
+    }
+  }
+}

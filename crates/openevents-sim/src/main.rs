@@ -1,6 +1,6 @@
 //! openevents-sim: sends a stream of semi-realistic events to an OpenEvents in dev mode
 //! (OPENEVENTS_DEV_AUTH=true), using the example profiles `nl.vng.meldingen`,
-//! `nl.vng.vergunningen` and `nl.vng.gesprekken`.
+//! `nl.vng.vergunningen`, `nl.vng.gesprekken` and `nl.vng.taken`.
 //!
 //! Every zaak is a scenario: a list of steps with realistic gaps between them. Meldingen
 //! come in via a meldingen-API (Signalen) or the KCC, aanvragen via the Omgevingsloket,
@@ -24,6 +24,7 @@ const ID: &str = "https://id.example.nl/";
 const G: &str = "nl.vng.gesprekken";
 const M: &str = "nl.vng.meldingen.melding";
 const V: &str = "nl.vng.vergunningen.aanvraag";
+const TK: &str = "nl.vng.taken.taak";
 
 // ---------- actors ----------
 
@@ -833,6 +834,19 @@ impl World {
                     "toelichting": "De beslistermijn is opgeschort tot de stukken binnen zijn."
                 }) }),
             );
+            // A taak for the aanvrager in the inwoner's overview (MijnTaken).
+            let taak = s.create_new(
+                1,
+                &mw,
+                &format!("{TK}.aangemaakt"),
+                &nr,
+                json!({
+                    "titel": format!("Lever aanvullende stukken aan voor {nr}"),
+                    "toelichting": format!("Nodig: {}.", v.aanvulling.join(", ")),
+                    "zaak": zaak, "voor": { "partij": aanvrager.id }, "team": "vergunningen",
+                    "deadline": termijn
+                }),
+            );
             let g = format!("urn:uuid:{}", uuid::Uuid::now_v7());
             let onderwerp = format!("Aanvulling nodig voor {nr}");
             s.gesprek(
@@ -890,6 +904,7 @@ impl World {
                 .collect();
             let a = self.min(1440, 7200);
             s.patch(a, &indiener_aanvulling, &format!("{V}.aanvulling_ontvangen"), &zaak, &nr, json!({ "aanvullingOntvangen": json!({ "bijlagen": bijlagen, "toelichting": "Zie bijlage." }) }));
+            s.patch(2, &mw, &format!("{TK}.afgerond"), &taak, &nr, json!({}));
             let a = self.min(10, 600);
             s.patch(
                 a,
