@@ -263,7 +263,10 @@ function timeline(ids) {
   }
   const events = ids.flatMap((id) => S.log.get(id) || []).sort((a, b) => (a.time || "").localeCompare(b.time || "") || +a.sequence - +b.sequence);
   const what = (e) => (S.titles[e.type] || e.type.split(".").slice(-2).join(" ")) + (e.data?.resourceData?.statustypeOmschrijving ? ": " + e.data.resourceData.statustypeOmschrijving : "");
-  return `<ul class="timeline">${events.map((e) => `<li><div class="when">${time(e.time)}</div>${esc(what(e))} <span class="when">door ${esc(name(e.actor))}</span></li>`).join("")}</ul>`;
+  // Eén handeling met meerdere commits (status en zaak) is één regel: per transactie de meest zeggende.
+  const one = new Map();
+  for (const e of events) { const k = e.transactionid || e.id, cur = one.get(k); if (!cur || what(e).length > what(cur).length) one.set(k, e); }
+  return `<ul class="timeline">${[...one.values()].map((e) => `<li><div class="when">${time(e.time)}</div>${esc(what(e))} <span class="when">door ${esc(name(e.actor))}</span></li>`).join("")}</ul>`;
 }
 
 function chat(g) {
