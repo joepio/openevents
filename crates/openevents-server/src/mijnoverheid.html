@@ -6,66 +6,100 @@
 <title>Mijn Demodam</title>
 <style>
 :root {
-  --bg: #f4f5f7; --card: #fff; --ink: #1b1f24; --muted: #5f6b7a; --line: #dde1e6;
-  --brand: #154273; --brand-ink: #fff; --accent: #e17000; --ok: #2f7d32; --warn: #a65b00; --bubble: #e9eef5; --mine: #dcefe0;
+  --bg: #fff; --side: #fff; --ink: #1b1b1b; --muted: #535353; --line: #d6d6d6; --soft: #f3f3f3;
+  --link: #01689b; --brand: #154273; --brand-ink: #fff; --accent: #e17000;
+  --open-bg: #dcecf7; --open-ink: #0b4a73; --todo-bg: #fde6cc; --todo-ink: #7a3c00; --done-bg: #e5f1e0; --done-ink: #275c1a;
+  --bubble: #eef3f8; --mine: #e5f1e0;
 }
 @media (prefers-color-scheme: dark) {
-  :root { --bg: #14171b; --card: #1d2126; --ink: #e8eaed; --muted: #9aa4b1; --line: #313740;
-    --brand: #2b5d94; --accent: #ff9a3c; --ok: #7bc47f; --warn: #f0b35a; --bubble: #273140; --mine: #22402a; }
+  :root { --bg: #141619; --side: #141619; --ink: #ececec; --muted: #a8adb3; --line: #33373c; --soft: #1e2125;
+    --link: #6fb6e6; --brand: #2a6aa8; --accent: #ff9a3c;
+    --open-bg: #1b3a52; --open-ink: #bfe0f7; --todo-bg: #4a2f12; --todo-ink: #ffd3a3; --done-bg: #24391e; --done-ink: #c6e6b8;
+    --bubble: #1e2a36; --mine: #24391e; }
 }
 * { box-sizing: border-box; }
-body { margin: 0; font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
-header { background: var(--brand); color: var(--brand-ink); }
-.bar { max-width: 1040px; margin: 0 auto; padding: 12px 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-.brand { font-weight: 700; font-size: 18px; margin-right: auto; color: inherit; text-decoration: none; }
-.brand small { font-weight: 400; opacity: .8; margin-left: 6px; }
+body { margin: 0; font: 16px/1.5 "Fira Sans", "Segoe UI", system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--ink); }
+a { color: var(--link); }
 select, button, input, textarea { font: inherit; }
-header select { border-radius: 6px; border: 0; padding: 6px 8px; }
-.pill { border: 1px solid rgba(255,255,255,.5); border-radius: 99px; padding: 2px 10px; font-size: 13px; }
-.pill.on { background: #2f7d32; border-color: #2f7d32; }
-main, footer { max-width: 1040px; margin: 0 auto; padding: 16px; }
-h1 { font-size: 24px; margin: 8px 0 4px; }
-h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 24px 0 8px; }
-.grid { display: grid; gap: 10px; }
-.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: flex; gap: 12px; align-items: center; text-decoration: none; color: inherit; }
-a.card:hover { border-color: var(--brand); }
-.card .main { flex: 1; min-width: 0; }
-.card .t { font-weight: 600; }
-.card .s { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.badge { font-size: 12px; border-radius: 99px; padding: 1px 9px; border: 1px solid currentColor; white-space: nowrap; }
-.badge.ok { color: var(--ok); } .badge.warn { color: var(--warn); }
+.demo { background: var(--soft); font-size: 14px; text-align: center; padding: 8px 16px; display: flex; gap: 10px; justify-content: center; align-items: center; flex-wrap: wrap; }
+.pill { border-radius: 99px; padding: 0 10px; font-size: 13px; background: var(--line); }
+.pill.on { background: var(--done-bg); color: var(--done-ink); }
+header { border-bottom: 1px solid var(--line); }
+.bar, .page, footer { max-width: 1200px; margin: 0 auto; padding: 0 16px; }
+.bar { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; padding-top: 20px; padding-bottom: 20px; }
+.brand { font-weight: 700; font-size: 28px; margin-right: auto; color: var(--ink); text-decoration: none; display: flex; align-items: center; gap: 12px; }
+.brand .mark { width: 14px; height: 44px; background: var(--brand); display: inline-block; }
+.who { display: flex; align-items: center; gap: 8px; }
+.who select { border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; background: var(--bg); color: var(--ink); }
+.crumbs { font-size: 15px; margin: 20px 0 8px; color: var(--muted); }
+.page { display: grid; grid-template-columns: 240px 1fr; gap: 48px; }
+nav.side { padding-top: 16px; }
+nav.side a { display: flex; align-items: center; gap: 14px; padding: 9px 12px; color: var(--ink); text-decoration: none; border-radius: 4px; }
+nav.side a:hover { background: var(--soft); }
+nav.side a.on { font-weight: 700; background: var(--soft); }
+nav.side svg { width: 22px; height: 22px; flex: none; }
+nav.side .n { margin-left: auto; font-size: 13px; font-weight: 700; }
+main { min-width: 0; padding-bottom: 24px; }
+h1 { font-size: 34px; line-height: 1.2; margin: 16px 0 8px; }
+h2 { font-size: 22px; margin: 32px 0 8px; }
+.lead { margin: 0 0 16px; }
+.tabs { display: flex; gap: 8px; border-bottom: 1px solid var(--line); margin: 16px 0 0; }
+.tabs a { padding: 10px 16px; text-decoration: none; color: var(--ink); font-weight: 700; border-bottom: 3px solid transparent; }
+.tabs a.on { border-color: var(--brand); }
+.tabs .n { font-size: 13px; margin-left: 8px; }
+.rows { list-style: none; margin: 0; padding: 0; }
+.row { display: flex; gap: 16px; align-items: center; padding: 16px 12px; border-bottom: 1px solid var(--line); text-decoration: none; color: var(--ink); }
+.row:hover { background: var(--soft); }
+.row .main { flex: 1; min-width: 0; }
+.row .t { font-weight: 700; }
+.row .s { color: var(--muted); font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .d { color: var(--muted); font-size: 14px; white-space: nowrap; }
+.row .arrow { font-size: 20px; color: var(--link); }
+.badge { font-size: 13px; font-weight: 700; border-radius: 3px; padding: 1px 8px; white-space: nowrap; background: var(--open-bg); color: var(--open-ink); }
+.badge.todo { background: var(--todo-bg); color: var(--todo-ink); } .badge.ok { background: var(--done-bg); color: var(--done-ink); }
 .flash { animation: flash 1.6s ease-out; }
-@keyframes flash { from { box-shadow: 0 0 0 3px var(--accent); } to { box-shadow: 0 0 0 0 transparent; } }
-.btn { background: var(--brand); color: var(--brand-ink); border: 0; border-radius: 6px; padding: 7px 12px; cursor: pointer; }
-.btn.light { background: transparent; color: var(--brand); border: 1px solid var(--brand); }
+@keyframes flash { from { background: var(--todo-bg); } to { background: transparent; } }
+.btn { background: var(--brand); color: var(--brand-ink); border: 0; border-radius: 4px; padding: 9px 16px; cursor: pointer; font-weight: 700; }
+.btn.light { background: transparent; color: var(--link); border: 2px solid var(--link); }
 .btn:disabled { opacity: .5; cursor: default; }
-.empty { color: var(--muted); padding: 6px 2px; }
-details summary { cursor: pointer; color: var(--muted); margin: 20px 0 8px; }
-.back { color: var(--brand); text-decoration: none; }
-dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 12px 0; }
+.empty { color: var(--muted); padding: 12px; }
+.box { background: var(--soft); padding: 16px; margin: 16px 0; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 24px; margin: 16px 0; }
 dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
 .timeline { list-style: none; padding: 0; margin: 0; border-left: 2px solid var(--line); }
-.timeline li { padding: 2px 0 12px 14px; position: relative; }
-.timeline li::before { content: ""; position: absolute; left: -6px; top: 7px; width: 10px; height: 10px; border-radius: 50%; background: var(--brand); }
-.timeline .when { color: var(--muted); font-size: 13px; }
-.chat { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
-.msg { max-width: 80%; background: var(--bubble); border-radius: 12px; padding: 8px 12px; }
+.timeline li { padding: 2px 0 14px 16px; position: relative; }
+.timeline li::before { content: ""; position: absolute; left: -7px; top: 8px; width: 12px; height: 12px; border-radius: 50%; background: var(--brand); }
+.timeline .when { color: var(--muted); font-size: 14px; }
+.chat { display: flex; flex-direction: column; gap: 10px; margin: 16px 0; }
+.msg { max-width: 80%; background: var(--bubble); border-radius: 4px; padding: 10px 14px; }
 .msg.me { align-self: flex-end; background: var(--mine); }
-.msg .who { font-size: 12px; color: var(--muted); }
-form.say { display: flex; gap: 8px; margin-top: 8px; }
-form.say textarea { flex: 1; min-height: 44px; border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: var(--card); color: var(--ink); }
-.how { margin-top: 32px; font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; }
-.how code { background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
-.err { color: #c62828; }
+.msg .by { font-size: 13px; color: var(--muted); }
+form.say { display: flex; gap: 8px; margin-top: 12px; align-items: flex-end; }
+form.say textarea { flex: 1; min-height: 48px; border: 1px solid var(--muted); border-radius: 4px; padding: 8px; background: var(--bg); color: var(--ink); }
+.how { margin: 32px 0; font-size: 14px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 16px; }
+.how code { background: var(--soft); border-radius: 3px; padding: 0 4px; }
+.err { color: #d52b1e; }
+@media (max-width: 800px) {
+  .page { grid-template-columns: 1fr; gap: 0; }
+  nav.side { display: flex; overflow-x: auto; gap: 4px; padding-top: 8px; border-bottom: 1px solid var(--line); }
+  nav.side a { white-space: nowrap; padding: 8px 10px; }
+  nav.side .n { margin-left: 4px; }
+  .brand { font-size: 22px; } .brand .mark { height: 34px; }
+  h1 { font-size: 26px; }
+  .row .d { display: none; }
+}
 </style>
 </head>
 <body>
+<div class="demo"><span><b>Demo op OpenEvents.</b> Deze pagina leest alleen de eventstroom. De getoonde gegevens zijn fictief.</span><span id="live" class="pill">verbinden…</span></div>
 <header><div class="bar">
-  <a class="brand" href="#/">Mijn Demodam <small>demo op OpenEvents</small></a>
-  <span id="live" class="pill">verbinden…</span>
-  <label>Ingelogd als <select id="who"></select></label>
+  <a class="brand" href="#/"><span class="mark"></span>Mijn Demodam</a>
+  <label class="who"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg><select id="who" aria-label="Ingelogd als"></select></label>
 </div></header>
-<main id="view"><p class="empty">Laden…</p></main>
+<div class="page">
+  <nav class="side" id="nav"></nav>
+  <main><div class="crumbs" id="crumbs"></div><div id="view"><p class="empty">Laden…</p></div></main>
+</div>
 <footer><div class="how" id="how"></div></footer>
 
 <script id="app">
@@ -145,28 +179,61 @@ function status(r) {
   return s.status || (s.einddatum ? "afgerond" : "");
 }
 const zaakOf = (r) => r.state.zaak || r.state.aanleidingZaak || r.state.melding || r.state.aanvraag;
+const day = (t) => t ? new Date(t).toLocaleDateString("nl-NL", { day: "numeric", month: "short", year: "numeric" }) : "";
 const date = (t) => t ? new Date(t).toLocaleDateString("nl-NL", { day: "numeric", month: "long", year: "numeric" }) : "";
 const time = (t) => t ? new Date(t).toLocaleString("nl-NL", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
 const name = (id) => (S.personas.find((p) => p.id === id)?.label.split(" (")[0]) || (id || "").split("/").pop().replace(/^./, (c) => c.toUpperCase());
 
 // ---------- weergave ----------
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const badge = (r) => status(r) ? `<span class="badge ${done(r) ? "ok" : "warn"}">${esc(status(r))}</span>` : "";
-function card(r, sub, extra = "") {
-  const f = S.flash.has(r.id) ? " flash" : "";
-  return `<a class="card${f}" href="#/r/${encodeURIComponent(r.id)}"><div class="main"><div class="t">${esc(title(r))}</div><div class="s">${esc(sub)}</div></div>${badge(r)}${extra}</a>`;
+function badge(r) {
+  const st = status(r);
+  if (!st) return "";
+  const cls = done(r) ? "ok" : kind(r) === "taak" ? "todo" : "";
+  return `<span class="badge ${cls}">${esc(st)}</span>`;
 }
-const list = (items, f) => items.length ? `<div class="grid">${items.map(f).join("")}</div>` : `<p class="empty">Niets.</p>`;
+const row = (r, sub) => `<li><a class="row${S.flash.has(r.id) ? " flash" : ""}" href="#/r/${encodeURIComponent(r.id)}"><div class="main"><div class="t">${esc(title(r))}</div>${sub ? `<div class="s">${esc(sub)}</div>` : ""}</div><span class="d">${esc(day(r.updated))}</span>${badge(r)}<span class="arrow" aria-hidden="true">→</span></a></li>`;
+const list = (items, f, none = "Niets.") => items.length ? `<ul class="rows">${items.map(f).join("")}</ul>` : `<p class="empty">${none}</p>`;
 const lastBijdrage = (g) => all("bijdrage").filter((b) => b.state.gesprek === g.id).sort(newest)[0];
+const subTaak = (t) => t.state.deadline ? "Uiterlijk " + date(t.state.deadline) : t.state.toelichting || "";
+const subZaak = (z) => [z.state.zaaknummer, z.state.adres].filter(Boolean).join(" · ");
+const subGesprek = (g) => lastBijdrage(g)?.state.tekstGespreksBijdrage || "";
 
-function overview() {
-  const taken = all("taak").filter(mine), zaken = all("aanvraag").concat(all("melding"), all("zaak")).filter(mine), gesprekken = all("gesprek").filter(mine);
-  const open = (l) => l.filter((r) => !done(r)).sort(newest), closed = [...taken, ...zaken, ...gesprekken].filter(done).sort(newest);
-  return `<h1>Welkom, ${esc(name(S.me))}</h1>
-    <h2>Te doen</h2>${list(open(taken), (t) => card(t, t.state.deadline ? "Uiterlijk " + date(t.state.deadline) : t.state.toelichting || ""))}
-    <h2>Lopende zaken</h2>${list(open(zaken), (z) => card(z, [z.state.zaaknummer, z.state.adres].filter(Boolean).join(" · ")))}
-    <h2>Berichten</h2>${list(open(gesprekken), (g) => card(g, lastBijdrage(g)?.state.tekstGespreksBijdrage || ""))}
-    <details><summary>Afgerond (${closed.length})</summary>${list(closed, (r) => card(r, time(r.updated)))}</details>`;
+// Wat van mij is, per soort; ook de tellers in het menu.
+function mijn() {
+  const open = (l) => l.filter((r) => !done(r)).sort(newest), closed = (l) => l.filter(done).sort(newest);
+  const taken = all("taak").filter(mine), zaken = ZAAK.flatMap(all).filter(mine), gesprekken = all("gesprek").filter(mine);
+  return { taken: open(taken), takenKlaar: closed(taken), zaken: open(zaken), zakenKlaar: closed(zaken), gesprekken: open(gesprekken), gesprekkenKlaar: closed(gesprekken) };
+}
+
+const ICON = {
+  "": '<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>',
+  taken: '<path d="M3 6l2 2 3-3M3 13l2 2 3-3M11 7h10M11 14h10M3 20h18"/>',
+  berichten: '<rect x="3" y="5" width="18" height="14" rx="1"/><path d="M3 6l9 7 9-7"/>',
+  zaken: '<path d="M3 6h7l2 2h9v11H3z"/>',
+};
+const PAGES = [["", "Overzicht"], ["taken", "Taken"], ["berichten", "Berichten"], ["zaken", "Zaken"]];
+
+function nav(page, m) {
+  const n = { taken: m.taken.length, berichten: m.gesprekken.length, zaken: m.zaken.length };
+  return PAGES.map(([k, label]) => `<a href="#/${k}"${page === k ? ' class="on" aria-current="page"' : ""}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">${ICON[k]}</svg>${label}${n[k] ? `<span class="n">${n[k]}</span>` : ""}</a>`).join("");
+}
+
+function page(k, m) {
+  if (k === "taken") return `<h1>Mijn taken</h1><p class="lead">Wat de gemeente van u vraagt.</p>${list(m.taken, (t) => row(t, subTaak(t)), "U hoeft nu niets te doen.")}
+    <h2>Afgerond</h2>${list(m.takenKlaar, (t) => row(t, subTaak(t)))}`;
+  if (k === "berichten") return `<h1>Mijn berichten</h1><p class="lead">Uw gesprekken met de gemeente. Een vraag stelt u bij de zaak waar die over gaat.</p>${list(m.gesprekken, (g) => row(g, subGesprek(g)), "Geen open gesprekken.")}
+    <h2>Gesloten</h2>${list(m.gesprekkenKlaar, (g) => row(g, subGesprek(g)))}`;
+  if (k === "zaken" || k === "zaken/gesloten") {
+    const dicht = k === "zaken/gesloten";
+    return `<h1>Mijn zaken</h1><p class="lead">Volg de status en geschiedenis van uw aanvragen en meldingen.</p>
+    <div class="tabs"><a href="#/zaken"${dicht ? "" : ' class="on"'}>Lopende zaken<span class="n">${m.zaken.length}</span></a><a href="#/zaken/gesloten"${dicht ? ' class="on"' : ""}>Gesloten<span class="n">${m.zakenKlaar.length}</span></a></div>
+    ${list(dicht ? m.zakenKlaar : m.zaken, (z) => row(z, subZaak(z)), dicht ? "Geen gesloten zaken." : "Geen lopende zaken.")}`;
+  }
+  return `<h1>Welkom, ${esc(name(S.me))}</h1><p class="lead">Hier ziet u wat u bij de gemeente Demodam heeft lopen.</p>
+    <h2>Te doen</h2>${list(m.taken, (t) => row(t, subTaak(t)), "U hoeft nu niets te doen.")}
+    <h2>Lopende zaken</h2>${list(m.zaken.slice(0, 5), (z) => row(z, subZaak(z)), "Geen lopende zaken.")}${m.zaken.length > 5 ? `<p><a href="#/zaken">Alle ${m.zaken.length} lopende zaken</a></p>` : ""}
+    <h2>Berichten</h2>${list(m.gesprekken, (g) => row(g, subGesprek(g)), "Geen open gesprekken.")}`;
 }
 
 function timeline(ids) {
@@ -177,30 +244,30 @@ function timeline(ids) {
 function chat(g) {
   const msgs = all("bijdrage").filter((b) => b.state.gesprek === g.id).sort((a, b) => (a.state.leveringsmoment || "").localeCompare(b.state.leveringsmoment || ""));
   const isOpen = !g.state.momentEindeGesprek;
-  return `<div class="chat">${msgs.map((b) => `<div class="msg${b.state.verzender === S.me ? " me" : ""}${S.flash.has(b.id) ? " flash" : ""}"><div class="who">${esc(name(b.state.verzender))}${b.state.automatisch ? " · automatisch" : ""} · ${time(b.state.leveringsmoment)}</div>${esc(b.state.tekstGespreksBijdrage)}</div>`).join("") || `<p class="empty">Nog geen berichten.</p>`}</div>
+  return `<div class="chat">${msgs.map((b) => `<div class="msg${b.state.verzender === S.me ? " me" : ""}${S.flash.has(b.id) ? " flash" : ""}"><div class="by">${esc(name(b.state.verzender))}${b.state.automatisch ? " · automatisch" : ""} · ${time(b.state.leveringsmoment)}</div>${esc(b.state.tekstGespreksBijdrage)}</div>`).join("") || `<p class="empty">Nog geen berichten.</p>`}</div>
     ${isOpen ? `<form class="say" data-act="reply" data-id="${esc(g.id)}"><textarea name="tekst" placeholder="Typ uw bericht" required></textarea><button class="btn">Versturen</button></form>
       <p><button class="btn light" data-act="close" data-id="${esc(g.id)}">Vraag beantwoord, gesprek sluiten</button></p>` : `<p class="empty">Dit gesprek is gesloten${g.state.afsluitreden ? ": " + esc(g.state.afsluitreden) : ""}.</p>`}`;
 }
 
 function detail(id) {
   const r = S.res.get(id);
-  if (!r) return `<a class="back" href="#/">← Overzicht</a><p class="empty">Niet gevonden, of (nog) niet zichtbaar voor u.</p>`;
+  if (!r) return `<p class="empty">Niet gevonden, of (nog) niet zichtbaar voor u.</p>`;
   const k = kind(r), s = r.state;
   const facts = [["Zaaknummer", s.zaaknummer || s.identificatie], ["Status", status(r)], ["Adres", s.adres], ["Ingediend", date(s.ingediend || s.gemeld || s.aanvangsmomentGesprek || s.aangemaakt)],
     ["Uiterlijke beslisdatum", date(s.uiterlijkeBeslisdatum)], ["Deadline", date(s.deadline)], ["Toelichting", s.toelichting || s.omschrijving], ["Besluit", s.besluit?.uitkomst || s.besluit]]
     .filter(([, v]) => v && typeof v !== "object");
   const parent = zaakOf(r) && S.res.get(zaakOf(r));
-  let body = `<a class="back" href="#/">← Overzicht</a><h1>${esc(title(r))} ${badge(r)}</h1>`;
-  if (parent) body += `<p>Hoort bij ${card(parent, parent.state.zaaknummer || "")}</p>`;
+  let body = `<h1>${esc(title(r))}</h1><p>${badge(r)}</p>`;
+  if (parent) body += `<h2>Hoort bij</h2>${list([parent], (z) => row(z, subZaak(z)))}`;
   body += `<dl>${facts.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`;
-  if (k === "taak" && !done(r)) body += `<p><button class="btn" data-act="done" data-id="${esc(id)}">Gedaan</button></p>`;
+  if (k === "taak" && !done(r)) body += `<div class="box"><p>Klaar met deze taak? Laat het de gemeente weten.</p><button class="btn" data-act="done" data-id="${esc(id)}">Taak afronden</button></div>`;
   if (k === "gesprek") body += chat(r);
   if (ZAAK.includes(k)) {
     const children = [...S.res.values()].filter((x) => zaakOf(x) === id);
     const taken = children.filter((x) => kind(x) === "taak"), gesprekken = children.filter((x) => kind(x) === "gesprek");
-    body += `<h2>Taken</h2>${list(taken, (t) => card(t, t.state.deadline ? "Uiterlijk " + date(t.state.deadline) : ""))}
-      <h2>Berichten</h2>${list(gesprekken, (g) => card(g, lastBijdrage(g)?.state.tekstGespreksBijdrage || ""))}
-      ${done(r) ? "" : `<form class="say" data-act="ask" data-id="${esc(id)}"><textarea name="tekst" placeholder="Een vraag over deze zaak?" required></textarea><button class="btn">Vraag stellen</button></form>`}
+    body += `<h2>Taken</h2>${list(taken, (t) => row(t, subTaak(t)))}
+      <h2>Berichten</h2>${list(gesprekken, (g) => row(g, subGesprek(g)))}
+      ${done(r) ? "" : `<div class="box"><b>Een vraag over deze zaak?</b><form class="say" data-act="ask" data-id="${esc(id)}"><textarea name="tekst" aria-label="Uw vraag" required></textarea><button class="btn">Vraag stellen</button></form></div>`}
       <h2>Wat er gebeurde</h2>${timeline([id, ...children.filter((x) => !["taak", "gesprek"].includes(kind(x))).map((x) => x.id)])}`;
   } else body += `<h2>Wat er gebeurde</h2>${timeline([id])}`;
   return body;
@@ -212,11 +279,19 @@ function render() {
   pending = true;
   requestAnimationFrame(() => {
     pending = false;
-    const route = decodeURIComponent(location.hash.replace(/^#\/r\//, ""));
     const v = document.getElementById("view");
-    const typing = v.querySelector("textarea:focus")?.value;
-    if (typing) return; // niet verversen terwijl iemand typt
-    v.innerHTML = location.hash.startsWith("#/r/") ? detail(route) : overview();
+    if (v.querySelector("textarea:focus")?.value) return; // niet verversen terwijl iemand typt
+    const m = mijn(), h = location.hash.replace(/^#\/?/, "");
+    let k = h, crumb = "";
+    if (h.startsWith("r/")) {
+      const r = S.res.get(decodeURIComponent(h.slice(2)));
+      k = !r ? "" : kind(r) === "taak" ? "taken" : kind(r) === "gesprek" ? "berichten" : "zaken";
+      v.innerHTML = detail(decodeURIComponent(h.slice(2)));
+      crumb = r ? " › " + esc(title(r)) : "";
+    } else v.innerHTML = page(h, m);
+    const sec = PAGES.find(([p]) => p === k.split("/")[0]);
+    document.getElementById("crumbs").innerHTML = `<a href="#/">Home</a>${sec && sec[0] ? ` › ${crumb ? `<a href="#/${sec[0]}">${sec[1]}</a>` : sec[1]}` : ""}${crumb}`;
+    document.getElementById("nav").innerHTML = nav(k.split("/")[0], m);
     S.flash.clear();
     const lines = document.getElementById("app").textContent.trim().split("\n").length;
     const load = S.requests - S.acts, acts = S.acts ? ` Daarna ${S.acts} keer iets gedaan: elke handeling is één <code>POST /events</code>.` : " Iets doen is één <code>POST /events</code> met een handeling.";
