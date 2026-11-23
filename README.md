@@ -34,6 +34,7 @@ Tijdens het fieldlab MijnGesprekken (10 november 2026) bleek er belangstelling v
 - [Wissen en bewaren](docs/wissen.md): AVG, Archiefwet, crypto-shredding
 - [Profielen](docs/profielen.md): hoe een domein erop landt, met Gesprekken als eerste
 - [Modules](docs/modules.md): domeinlogica als kleine open modules, met bezwaar als voorbeeld
+- [MijnOverheid-demo op OpenEvents](docs/mijnoverheid.md): MijnZaken en MijnTaken als leesweergave, live
 - [Aansluiting op het VNG API Lab](docs/lab-aansluiting.md): welke patterns, en wat daar in `next` moet veranderen
 - [Roadmap](docs/roadmap.md)
 - [Besluiten (ADR's)](docs/adr/)

@@ -1187,3 +1187,134 @@ async fn related_and_audit_follow_references() {
     assert!(standalone.contains(&"nl.vng.taken.taak".to_string()));
     assert!(!standalone.contains(&"nl.vng.gesprekken.bijdrage".to_string()));
 }
+
+#[tokio::test]
+async fn mijnzaken_and_mijntaken_for_the_burger_from_the_token() {
+    let app = app();
+    install(&app).await;
+    let olo = "dev:https://id.example.nl/omgevingsloket|rol=systeem";
+    let jan = "dev:https://id.example.nl/jan|rol=inwoner";
+    let jan_id = "https://id.example.nl/jan";
+    let priya = "dev:https://id.example.nl/priya|rol=inwoner";
+    let femke = "dev:https://id.example.nl/femke|rol=medewerker|team=vergunningen";
+    let zaak = "https://zaken.demodam.nl/vergunningen/OV-7";
+    for (token, e) in [
+        (
+            olo,
+            ev(
+                "m1",
+                "nl.vng.vergunningen.aanvraag.ingediend",
+                zaak,
+                json!({ "resourceData": {
+            "zaaknummer": "OV-7", "activiteiten": ["bouwen"], "omschrijving": "Dakkapel",
+            "bijlagen": ["tekening.pdf"], "aanvrager": { "partij": jan_id, "rol": "aanvrager" } } }),
+            ),
+        ),
+        (
+            femke,
+            ev(
+                "m2",
+                "nl.vng.vergunningen.aanvraag.ontvankelijk_verklaard",
+                zaak,
+                json!({ "patch": { "uiterlijkeBeslisdatum": "2026-12-31" } }),
+            ),
+        ),
+        (
+            femke,
+            ev(
+                "m3",
+                "nl.vng.taken.taak.aangemaakt",
+                "urn:uuid:0193a0c4-0000-7000-8000-000000000001",
+                json!({ "resourceData": {
+            "titel": "Lever de constructietekening aan", "zaak": zaak, "voor": { "partij": jan_id },
+            "team": "vergunningen", "deadline": "2026-12-08" } }),
+            ),
+        ),
+    ] {
+        let (s, b, _) = call(&app, "POST", "/events", Some(token), Some(e)).await;
+        assert_eq!(s, StatusCode::CREATED, "{b}");
+    }
+
+    let (s, _, _) = call(&app, "GET", "/mijn/zaken/zaken", None, None).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+
+    let (s, list, h) = call(&app, "GET", "/mijn/zaken/zaken", Some(jan), None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(h["api-version"], "next");
+    assert_eq!(list["count"], 1);
+    let z = &list["results"][0];
+    assert_eq!(z["zaaknummer"], "OV-7");
+    assert_eq!(z["urn"], "urn:nl:gemeenten:zaak:OV-7");
+    assert_eq!(z["status"], "open");
+    assert_eq!(z["huidigeStatus"], "In behandeling");
+    let uuid = z["uuid"].as_str().unwrap();
+
+    let (s, d, _) = call(
+        &app,
+        "GET",
+        &format!("/mijn/zaken/zaken/{uuid}"),
+        Some(jan),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let titels: Vec<_> = d["statushistorie"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| (s["titel"].clone(), s["status"].clone()))
+        .collect();
+    assert_eq!(
+        titels,
+        vec![
+            (json!("Ingediend"), json!("voltooid")),
+            (json!("In behandeling"), json!("lopend")),
+            (json!("Besloten"), json!("gepland")),
+        ]
+    );
+    assert_eq!(d["documenten"][0]["naam"], "tekening.pdf");
+
+    // Not betrokken: an empty list and the same 404 as a missing zaak.
+    let (_, list, _) = call(&app, "GET", "/mijn/zaken/zaken", Some(priya), None).await;
+    assert_eq!(list["count"], 0);
+    let (s, _, _) = call(
+        &app,
+        "GET",
+        &format!("/mijn/zaken/zaken/{uuid}"),
+        Some(priya),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    // A medewerker may read the aanvraag, but it is not *her* zaak.
+    let (_, list, _) = call(&app, "GET", "/mijn/zaken/zaken", Some(femke), None).await;
+    assert_eq!(list["count"], 0);
+
+    let ctx = "urn%3Anl%3Agemeenten%3Azaak%3AOV-7";
+    let (s, taken, _) = call(
+        &app,
+        "GET",
+        &format!("/mijn/taken/taken?status=open&context={ctx}"),
+        Some(jan),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(taken["count"], 1);
+    let t = &taken["results"][0];
+    assert_eq!(t["uuid"], "0193a0c4-0000-7000-8000-000000000001");
+    assert_eq!(t["titel"]["nl"], "Lever de constructietekening aan");
+    assert_eq!(t["deadline"], "2026-12-08T23:59:59+01:00");
+    assert_eq!(t["context"]["urn"], "urn:nl:gemeenten:zaak:OV-7");
+    let (s, _, _) = call(
+        &app,
+        "GET",
+        "/mijn/taken/taken/0193a0c4-0000-7000-8000-000000000001",
+        Some(jan),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let (_, taken, _) = call(&app, "GET", "/mijn/taken/taken", Some(priya), None).await;
+    assert_eq!(taken["count"], 0);
+}

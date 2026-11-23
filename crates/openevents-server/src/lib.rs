@@ -1,6 +1,7 @@
 //! HTTP API of OpenEvents (docs/architectuur.md, "API-oppervlak").
 
 pub mod auth;
+pub mod mijn;
 pub mod notificaties;
 pub mod openapi;
 
@@ -47,6 +48,10 @@ pub fn router(state: AppState) -> Router {
         .route("/profiles", get(list_profiles))
         .route("/profiles/{id}", get(get_profile).put(put_profile))
         .route("/profiles/{id}/openapi.json", get(get_profile_openapi))
+        .route("/mijn/zaken/zaken", get(mijn::list_zaken))
+        .route("/mijn/zaken/zaken/{uuid}", get(mijn::get_zaak))
+        .route("/mijn/taken/taken", get(mijn::list_taken))
+        .route("/mijn/taken/taken/{uuid}", get(mijn::get_taak))
         .route("/ui", get(ui))
         .route("/ui/", get(ui))
         .route("/ui/config", get(ui_config))
