@@ -55,6 +55,8 @@ pub fn router(state: AppState) -> Router {
         .route("/mijn/zaken/zaken/{uuid}", get(mijn::get_zaak))
         .route("/mijn/taken/taken", get(mijn::list_taken))
         .route("/mijn/taken/taken/{uuid}", get(mijn::get_taak))
+        .route("/mijnoverheid", get(mijnoverheid))
+        .route("/mijnoverheid/", get(mijnoverheid))
         .route("/ui", get(ui))
         .route("/ui/", get(ui))
         .route("/ui/config", get(ui_config))
@@ -559,6 +561,15 @@ async fn put_profile(
 }
 
 // ---------- UI ----------
+
+async fn mijnoverheid() -> Response {
+    let mut res = include_str!("mijnoverheid.html").into_response();
+    res.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    res
+}
 
 async fn ui() -> Response {
     let mut res = include_str!("ui.html").into_response();

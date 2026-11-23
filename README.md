@@ -34,7 +34,7 @@ Tijdens het fieldlab MijnGesprekken (10 november 2026) bleek er belangstelling v
 - [Wissen en bewaren](docs/wissen.md): AVG, Archiefwet, crypto-shredding
 - [Profielen](docs/profielen.md): hoe een domein erop landt, met Gesprekken als eerste
 - [Modules](docs/modules.md): domeinlogica als kleine open modules, met bezwaar als voorbeeld
-- [MijnOverheid-demo op OpenEvents](docs/mijnoverheid.md): MijnZaken en MijnTaken als leesweergave, live
+- [MijnOverheid-demo op OpenEvents](docs/mijnoverheid.md): MijnZaken en MijnTaken als leesweergave, live, en een portaal op `/mijnoverheid` dat alleen events kent
 - [Aansluiting op het VNG API Lab](docs/lab-aansluiting.md): welke patterns, en wat daar in `next` moet veranderen
 - [Roadmap](docs/roadmap.md)
 - [Besluiten (ADR's)](docs/adr/)
@@ -59,7 +59,7 @@ OPENEVENTS_DEV_AUTH=true OPENEVENTS_ADMINS=urn:admin OPENEVENTS_PROFILES=example
 cargo test
 ```
 
-Open daarna http://localhost:8080/ui voor de beheer-UI: stand (materialized state), events (live), queries en schrijven. Met `OPENEVENTS_DEV_AUTH=true` kies je rechtsboven een persona uit de profielen ("Bekijk als", bijvoorbeeld inwoner of KCC-medewerker) en zie je wat die persoon mag zien; het paneel "Wat ziet wie?" vergelijkt alle persona's voor één subject. Zonder dev-modus plak je een token. Demodata laden: `examples/seed.sh` (tegen `http://localhost:8080`, of geef een andere basis-URL mee).
+Open daarna http://localhost:8080/mijnoverheid voor een klein inwonersportaal op alleen events, of http://localhost:8080/ui voor de beheer-UI: stand (materialized state), events (live), queries en schrijven. Met `OPENEVENTS_DEV_AUTH=true` kies je rechtsboven een persona uit de profielen ("Bekijk als", bijvoorbeeld inwoner of KCC-medewerker) en zie je wat die persoon mag zien; het paneel "Wat ziet wie?" vergelijkt alle persona's voor één subject. Zonder dev-modus plak je een token. Demodata laden: `examples/seed.sh` (tegen `http://localhost:8080`, of geef een andere basis-URL mee).
 
 Een stroom semi-realistische zaakevents: meldingen openbare ruimte (binnen via Signalen of het KCC), aanvragen omgevingsvergunning (via het Omgevingsloket) en de gesprekken daarbij, gekoppeld met `aanleiding.zaak`. Eerst 30 dagen historie, daarna live:
 

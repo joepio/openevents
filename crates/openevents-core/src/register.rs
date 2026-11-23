@@ -497,6 +497,7 @@ impl Register {
             .by_id
             .values()
             .map(|p| json!({ "id": p.id, "version": p.version, "types": p.types.keys().collect::<Vec<_>>(), "actions": p.actions.keys().collect::<Vec<_>>(),
+                "titles": p.actions.iter().filter_map(|(n, a)| a.title.as_ref().map(|t| (n.clone(), json!(t)))).collect::<serde_json::Map<_, _>>(),
                 "standalone": p.types.iter().filter(|(_, t)| !t.part_of).map(|(n, _)| n).collect::<Vec<_>>() }))
             .collect();
         list.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));

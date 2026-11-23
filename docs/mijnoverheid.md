@@ -36,3 +36,28 @@ De burger komt uit het token, net als in het contract. Eerst gelden de leesregel
 3. Open de API-inspector, klik op het tandwiel en dan op **OpenEvents (lokaal)**, en op **Toepassen**. Dat zet MijnZaken en MijnTaken op `http://localhost:8081/mijn/…` en het token op `dev:https://id.example.nl/jan|rol=inwoner`. Een ander token (bijvoorbeeld `…/priya`) laat een andere inwoner zien.
 
 Met een token en een OpenEvents-endpoint volgt de demo de eventstroom (`POST /events/tickets`, dan `GET /events?ticket=…`) en laadt hij zaken, taken en de open zaak opnieuw zodra er iets verandert.
+
+## Mijn Demodam: een portaal dat alleen events kent
+
+`/mijnoverheid` is een tweede, kleine demo naast de lab-demo: een inwonersportaal dat geen REST-API per soort gebruikt, maar alleen de eventstroom. Het is één HTML-bestand (`crates/openevents-server/src/mijnoverheid.html`, ongeveer 210 regels JavaScript, geen build) en laat zien hoe weinig logica een portaal nodig heeft als het register de rechten afdwingt.
+
+Zo werkt het:
+
+1. `GET /profiles` voor de namen van de handelingen ("Taak afronden").
+2. `POST /events/tickets` en daarna `GET /events?ticket=…&after=0`: één SSE-stroom met alle events die deze inwoner mag lezen, eerst de historie en dan live. De app vouwt ze tot de stand van elke resource (`resourceData`, `patch` volgens RFC 7396, `deleted`).
+3. Iets doen is één `POST /events` met een handeling: een vraag stellen (`nl.vng.gesprekken.gesprek.gestart`, met de eerste bijdrage in dezelfde transactie), reageren, een gesprek sluiten, een taak afronden. De UI verandert pas als het event terugkomt op de stroom, dus wat je ziet is wat het register heeft.
+
+Wie wat mag lezen of doen staat alleen in de profielen en geldt in het register; de app filtert niets voor de veiligheid. Wel toont hij op het overzicht alleen wat over de inwoner zelf gaat, want een leesregel kan meer laten zien (een openbare melding).
+
+Inloggen gaat in de demo met de persona's uit de dev-modus (`OPENEVENTS_DEV_AUTH=true`); de keuze staat rechtsboven.
+
+Vergeleken met de lab-demo (gemeten lokaal, als Jan, met MijnZaken en MijnTaken op OpenEvents en de andere API's als mock):
+
+| | Lab-demo | Mijn Demodam |
+|---|---|---|
+| Verzoeken bij laden | 21 in de dev-server (React doet ze daar dubbel), dus zo'n 11 naar 9 API's | 3 (profielen, ticket, stroom), plus 1 voor de demo-persona's |
+| Live bijwerken | lijsten opnieuw ophalen (4 verzoeken in een minuut met de simulator aan) | zit in de stroom: 0 extra verzoeken in die minuut |
+| Iets doen | per API een eigen endpoint | altijd `POST /events` |
+| Code | `App.tsx` 3.735 regels TypeScript, plus build | ongeveer 210 regels JavaScript |
+
+De lab-demo doet veel meer (producten, agenda, plannen, een assistent), dus de regels zijn geen eerlijke vergelijking van functies. Het punt is de vorm: één stroom en één schrijfroute in plaats van een client per API.

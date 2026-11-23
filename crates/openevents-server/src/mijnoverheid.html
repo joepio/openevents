@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mijn Demodam</title>
+<style>
+:root {
+  --bg: #f4f5f7; --card: #fff; --ink: #1b1f24; --muted: #5f6b7a; --line: #dde1e6;
+  --brand: #154273; --brand-ink: #fff; --accent: #e17000; --ok: #2f7d32; --warn: #a65b00; --bubble: #e9eef5; --mine: #dcefe0;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #14171b; --card: #1d2126; --ink: #e8eaed; --muted: #9aa4b1; --line: #313740;
+    --brand: #2b5d94; --accent: #ff9a3c; --ok: #7bc47f; --warn: #f0b35a; --bubble: #273140; --mine: #22402a; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
+header { background: var(--brand); color: var(--brand-ink); }
+.bar { max-width: 1040px; margin: 0 auto; padding: 12px 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.brand { font-weight: 700; font-size: 18px; margin-right: auto; color: inherit; text-decoration: none; }
+.brand small { font-weight: 400; opacity: .8; margin-left: 6px; }
+select, button, input, textarea { font: inherit; }
+header select { border-radius: 6px; border: 0; padding: 6px 8px; }
+.pill { border: 1px solid rgba(255,255,255,.5); border-radius: 99px; padding: 2px 10px; font-size: 13px; }
+.pill.on { background: #2f7d32; border-color: #2f7d32; }
+main, footer { max-width: 1040px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 24px; margin: 8px 0 4px; }
+h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 24px 0 8px; }
+.grid { display: grid; gap: 10px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: flex; gap: 12px; align-items: center; text-decoration: none; color: inherit; }
+a.card:hover { border-color: var(--brand); }
+.card .main { flex: 1; min-width: 0; }
+.card .t { font-weight: 600; }
+.card .s { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badge { font-size: 12px; border-radius: 99px; padding: 1px 9px; border: 1px solid currentColor; white-space: nowrap; }
+.badge.ok { color: var(--ok); } .badge.warn { color: var(--warn); }
+.flash { animation: flash 1.6s ease-out; }
+@keyframes flash { from { box-shadow: 0 0 0 3px var(--accent); } to { box-shadow: 0 0 0 0 transparent; } }
+.btn { background: var(--brand); color: var(--brand-ink); border: 0; border-radius: 6px; padding: 7px 12px; cursor: pointer; }
+.btn.light { background: transparent; color: var(--brand); border: 1px solid var(--brand); }
+.btn:disabled { opacity: .5; cursor: default; }
+.empty { color: var(--muted); padding: 6px 2px; }
+details summary { cursor: pointer; color: var(--muted); margin: 20px 0 8px; }
+.back { color: var(--brand); text-decoration: none; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 12px 0; }
+dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
+.timeline { list-style: none; padding: 0; margin: 0; border-left: 2px solid var(--line); }
+.timeline li { padding: 2px 0 12px 14px; position: relative; }
+.timeline li::before { content: ""; position: absolute; left: -6px; top: 7px; width: 10px; height: 10px; border-radius: 50%; background: var(--brand); }
+.timeline .when { color: var(--muted); font-size: 13px; }
+.chat { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+.msg { max-width: 80%; background: var(--bubble); border-radius: 12px; padding: 8px 12px; }
+.msg.me { align-self: flex-end; background: var(--mine); }
+.msg .who { font-size: 12px; color: var(--muted); }
+form.say { display: flex; gap: 8px; margin-top: 8px; }
+form.say textarea { flex: 1; min-height: 44px; border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: var(--card); color: var(--ink); }
+.how { margin-top: 32px; font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; }
+.how code { background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+.err { color: #c62828; }
+</style>
+</head>
+<body>
+<header><div class="bar">
+  <a class="brand" href="#/">Mijn Demodam <small>demo op OpenEvents</small></a>
+  <span id="live" class="pill">verbinden…</span>
+  <label>Ingelogd als <select id="who"></select></label>
+</div></header>
+<main id="view"><p class="empty">Laden…</p></main>
+<footer><div class="how" id="how"></div></footer>
+
+<script id="app">
+// Mijn Demodam: een inwonerportaal dat alleen events kent.
+// Lezen: één stroom (GET /events) vanaf het begin, daarna live. De stand van elke
+// resource is zijn commits na elkaar toegepast. Doen: een handeling posten
+// (POST /events); het resultaat komt vanzelf terug via dezelfde stroom.
+
+const S = { token: "", me: "", res: new Map(), log: new Map(), titles: {}, requests: 0, acts: 0, events: 0, stream: null, flash: new Set() };
+
+async function api(path, opts = {}) {
+  S.requests++;
+  const res = await fetch(path, { ...opts, headers: { "content-type": "application/json", authorization: "Bearer " + S.token, ...(opts.headers || {}) } });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail || body.title || "HTTP " + res.status);
+  return body;
+}
+
+// RFC 7396: null haalt weg, objecten worden samengevoegd, de rest vervangen.
+function merge(a, p) {
+  if (!p || typeof p !== "object" || Array.isArray(p)) return p;
+  const out = a && typeof a === "object" && !Array.isArray(a) ? { ...a } : {};
+  for (const [k, v] of Object.entries(p)) v === null ? delete out[k] : (out[k] = merge(out[k], v));
+  return out;
+}
+
+// Eén event toepassen: zo ontstaat de stand, zonder logica per soort.
+function apply(e) {
+  S.events++;
+  if (!e.data) return;
+  const d = e.data, id = d.resourceId || e.subject, cur = S.res.get(id);
+  if (d.deleted) S.res.delete(id);
+  else if (d.resourceData) S.res.set(id, { id, type: d.type || cur?.type, state: d.resourceData, updated: e.time });
+  else if (d.patch) S.res.set(id, { id, type: cur?.type || d.type, state: merge(cur?.state || {}, d.patch), updated: e.time });
+  (S.log.get(id) || S.log.set(id, []).get(id)).push(e);
+  S.flash.add(id);
+}
+
+async function connect(after = 0) {
+  if (S.stream) S.stream.close();
+  setLive(false);
+  const { ticket } = await api("/events/tickets", { method: "POST" });
+  S.requests++;
+  const es = new EventSource(`/events?ticket=${encodeURIComponent(ticket)}&after=${after}`);
+  S.stream = es;
+  let last = after;
+  es.onopen = () => setLive(true);
+  es.onmessage = (m) => { const e = JSON.parse(m.data); last = +e.sequence || last; apply(e); render(); };
+  // Een ticket werkt één keer: bij een storing een nieuw ticket, verder vanaf het laatste event.
+  es.onerror = () => { es.close(); setLive(false); setTimeout(() => S.stream === es && connect(last), 3000); };
+}
+
+// Een handeling doen. De UI verandert pas als het event terugkomt op de stroom.
+async function act(type, subject, data) {
+  S.acts++;
+  return api("/events", { method: "POST", body: JSON.stringify({ specversion: "1.0", id: crypto.randomUUID(), source: "https://mijn.demodam.nl", type, subject, data }) });
+}
+const newId = () => "urn:uuid:" + crypto.randomUUID();
+
+// ---------- wat is van mij, en wat is het ----------
+const kind = (r) => (r.type || "").split(".").pop();
+const ZAAK = ["aanvraag", "melding", "zaak"];
+const DONE = ["besloten", "ingetrokken", "afgehandeld", "afgerond", "vervallen"];
+const has = (v, me) => v === me || (v && typeof v === "object" && Object.values(v).some((x) => has(x, me)));
+const mine = (r) => has(r.state, S.me);
+const done = (r) => DONE.includes(r.state.status) || !!r.state.momentEindeGesprek || !!r.state.einddatum;
+const all = (k) => [...S.res.values()].filter((r) => kind(r) === k);
+const newest = (a, b) => (b.updated || "").localeCompare(a.updated || "");
+function title(r) {
+  const s = r.state;
+  if (kind(r) === "melding") return "Melding " + (s.subcategorie || s.categorie || "").toLowerCase();
+  return s.titel || s.gespreksonderwerp || s.omschrijving?.replace(/\.$/, "") || s.zaaknummer || r.id;
+}
+function status(r) {
+  const s = r.state;
+  if (kind(r) === "gesprek") return s.momentEindeGesprek ? "afgesloten" : "open";
+  return s.status || (s.einddatum ? "afgerond" : "");
+}
+const zaakOf = (r) => r.state.zaak || r.state.aanleidingZaak || r.state.melding || r.state.aanvraag;
+const date = (t) => t ? new Date(t).toLocaleDateString("nl-NL", { day: "numeric", month: "long", year: "numeric" }) : "";
+const time = (t) => t ? new Date(t).toLocaleString("nl-NL", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
+const name = (id) => (S.personas.find((p) => p.id === id)?.label.split(" (")[0]) || (id || "").split("/").pop().replace(/^./, (c) => c.toUpperCase());
+
+// ---------- weergave ----------
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const badge = (r) => status(r) ? `<span class="badge ${done(r) ? "ok" : "warn"}">${esc(status(r))}</span>` : "";
+function card(r, sub, extra = "") {
+  const f = S.flash.has(r.id) ? " flash" : "";
+  return `<a class="card${f}" href="#/r/${encodeURIComponent(r.id)}"><div class="main"><div class="t">${esc(title(r))}</div><div class="s">${esc(sub)}</div></div>${badge(r)}${extra}</a>`;
+}
+const list = (items, f) => items.length ? `<div class="grid">${items.map(f).join("")}</div>` : `<p class="empty">Niets.</p>`;
+const lastBijdrage = (g) => all("bijdrage").filter((b) => b.state.gesprek === g.id).sort(newest)[0];
+
+function overview() {
+  const taken = all("taak").filter(mine), zaken = all("aanvraag").concat(all("melding"), all("zaak")).filter(mine), gesprekken = all("gesprek").filter(mine);
+  const open = (l) => l.filter((r) => !done(r)).sort(newest), closed = [...taken, ...zaken, ...gesprekken].filter(done).sort(newest);
+  return `<h1>Welkom, ${esc(name(S.me))}</h1>
+    <h2>Te doen</h2>${list(open(taken), (t) => card(t, t.state.deadline ? "Uiterlijk " + date(t.state.deadline) : t.state.toelichting || ""))}
+    <h2>Lopende zaken</h2>${list(open(zaken), (z) => card(z, [z.state.zaaknummer, z.state.adres].filter(Boolean).join(" · ")))}
+    <h2>Berichten</h2>${list(open(gesprekken), (g) => card(g, lastBijdrage(g)?.state.tekstGespreksBijdrage || ""))}
+    <details><summary>Afgerond (${closed.length})</summary>${list(closed, (r) => card(r, time(r.updated)))}</details>`;
+}
+
+function timeline(ids) {
+  const events = ids.flatMap((id) => S.log.get(id) || []).sort((a, b) => +a.sequence - +b.sequence);
+  return `<ul class="timeline">${events.map((e) => `<li><div class="when">${time(e.time)}</div>${esc(S.titles[e.type] || e.type.split(".").slice(-2).join(" "))} <span class="when">door ${esc(name(e.actor))}</span></li>`).join("")}</ul>`;
+}
+
+function chat(g) {
+  const msgs = all("bijdrage").filter((b) => b.state.gesprek === g.id).sort((a, b) => (a.state.leveringsmoment || "").localeCompare(b.state.leveringsmoment || ""));
+  const isOpen = !g.state.momentEindeGesprek;
+  return `<div class="chat">${msgs.map((b) => `<div class="msg${b.state.verzender === S.me ? " me" : ""}${S.flash.has(b.id) ? " flash" : ""}"><div class="who">${esc(name(b.state.verzender))}${b.state.automatisch ? " · automatisch" : ""} · ${time(b.state.leveringsmoment)}</div>${esc(b.state.tekstGespreksBijdrage)}</div>`).join("") || `<p class="empty">Nog geen berichten.</p>`}</div>
+    ${isOpen ? `<form class="say" data-act="reply" data-id="${esc(g.id)}"><textarea name="tekst" placeholder="Typ uw bericht" required></textarea><button class="btn">Versturen</button></form>
+      <p><button class="btn light" data-act="close" data-id="${esc(g.id)}">Vraag beantwoord, gesprek sluiten</button></p>` : `<p class="empty">Dit gesprek is gesloten${g.state.afsluitreden ? ": " + esc(g.state.afsluitreden) : ""}.</p>`}`;
+}
+
+function detail(id) {
+  const r = S.res.get(id);
+  if (!r) return `<a class="back" href="#/">← Overzicht</a><p class="empty">Niet gevonden, of (nog) niet zichtbaar voor u.</p>`;
+  const k = kind(r), s = r.state;
+  const facts = [["Zaaknummer", s.zaaknummer || s.identificatie], ["Status", status(r)], ["Adres", s.adres], ["Ingediend", date(s.ingediend || s.gemeld || s.aanvangsmomentGesprek || s.aangemaakt)],
+    ["Uiterlijke beslisdatum", date(s.uiterlijkeBeslisdatum)], ["Deadline", date(s.deadline)], ["Toelichting", s.toelichting || s.omschrijving], ["Besluit", s.besluit?.uitkomst || s.besluit]]
+    .filter(([, v]) => v && typeof v !== "object");
+  const parent = zaakOf(r) && S.res.get(zaakOf(r));
+  let body = `<a class="back" href="#/">← Overzicht</a><h1>${esc(title(r))} ${badge(r)}</h1>`;
+  if (parent) body += `<p>Hoort bij ${card(parent, parent.state.zaaknummer || "")}</p>`;
+  body += `<dl>${facts.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`;
+  if (k === "taak" && !done(r)) body += `<p><button class="btn" data-act="done" data-id="${esc(id)}">Gedaan</button></p>`;
+  if (k === "gesprek") body += chat(r);
+  if (ZAAK.includes(k)) {
+    const children = [...S.res.values()].filter((x) => zaakOf(x) === id);
+    const taken = children.filter((x) => kind(x) === "taak"), gesprekken = children.filter((x) => kind(x) === "gesprek");
+    body += `<h2>Taken</h2>${list(taken, (t) => card(t, t.state.deadline ? "Uiterlijk " + date(t.state.deadline) : ""))}
+      <h2>Berichten</h2>${list(gesprekken, (g) => card(g, lastBijdrage(g)?.state.tekstGespreksBijdrage || ""))}
+      ${done(r) ? "" : `<form class="say" data-act="ask" data-id="${esc(id)}"><textarea name="tekst" placeholder="Een vraag over deze zaak?" required></textarea><button class="btn">Vraag stellen</button></form>`}
+      <h2>Wat er gebeurde</h2>${timeline([id, ...children.filter((x) => !["taak", "gesprek"].includes(kind(x))).map((x) => x.id)])}`;
+  } else body += `<h2>Wat er gebeurde</h2>${timeline([id])}`;
+  return body;
+}
+
+let pending = false;
+function render() {
+  if (pending) return;
+  pending = true;
+  requestAnimationFrame(() => {
+    pending = false;
+    const route = decodeURIComponent(location.hash.replace(/^#\/r\//, ""));
+    const v = document.getElementById("view");
+    const typing = v.querySelector("textarea:focus")?.value;
+    if (typing) return; // niet verversen terwijl iemand typt
+    v.innerHTML = location.hash.startsWith("#/r/") ? detail(route) : overview();
+    S.flash.clear();
+    const lines = document.getElementById("app").textContent.trim().split("\n").length;
+    const load = S.requests - S.acts, acts = S.acts ? ` Daarna ${S.acts} keer iets gedaan: elke handeling is één <code>POST /events</code>.` : " Iets doen is één <code>POST /events</code> met een handeling.";
+    document.getElementById("how").innerHTML = `Deze pagina kent geen API per soort. Laden kostte <b>${load}</b> verzoeken: de profielen, een ticket en <b>één stroom</b> (<code>GET /events</code>) met ${S.events} events, die daarna live blijft.${acts} Wat je mag zien en doen staat in het profiel en geldt in het register. De app is ${lines} regels JavaScript, zonder build. <a href="/ui">Techniek</a>`;
+  });
+}
+const setLive = (on) => { const l = document.getElementById("live"); l.textContent = on ? "live" : "verbinden…"; l.className = "pill" + (on ? " on" : ""); };
+
+// ---------- knoppen ----------
+document.addEventListener("submit", async (ev) => {
+  const f = ev.target; ev.preventDefault();
+  const tekst = f.tekst.value.trim(), id = f.dataset.id;
+  if (!tekst) return;
+  f.querySelector("button").disabled = true;
+  try {
+    if (f.dataset.act === "reply") await act("nl.vng.gesprekken.bijdrage.toegevoegd", newId(), { resourceData: { gesprek: id, tekstGespreksBijdrage: tekst } });
+    if (f.dataset.act === "ask") {
+      const z = S.res.get(id), g = newId();
+      await act("nl.vng.gesprekken.gesprek.gestart", g, { commits: [
+        { resourceId: g, type: "nl.vng.gesprekken.gesprek", resourceData: { gespreksonderwerp: "Vraag over " + (z.state.zaaknummer || title(z)), aanleidingZaak: id, team: z.state.team,
+          gespreksdeelnames: [{ type: "partij", partij: S.me, naam: name(S.me) }] } },
+        { resourceId: newId(), type: "nl.vng.gesprekken.bijdrage", resourceData: { gesprek: g, tekstGespreksBijdrage: tekst } }] });
+      location.hash = "#/r/" + encodeURIComponent(g);
+    }
+    f.tekst.value = "";
+  } catch (e) { f.insertAdjacentHTML("afterend", `<p class="err">${esc(e.message)}</p>`); }
+  f.querySelector("button").disabled = false;
+  render();
+});
+document.addEventListener("click", async (ev) => {
+  const b = ev.target.closest("button[data-act]");
+  if (!b || b.form) return;
+  b.disabled = true;
+  try {
+    if (b.dataset.act === "done") await act("nl.vng.taken.taak.afgerond", b.dataset.id, { patch: {} });
+    if (b.dataset.act === "close") await act("nl.vng.gesprekken.gesprek.afgesloten", b.dataset.id, { patch: { afsluitreden: "Vraag beantwoord" } });
+  } catch (e) { b.insertAdjacentHTML("afterend", ` <span class="err">${esc(e.message)}</span>`); b.disabled = false; }
+});
+addEventListener("hashchange", render);
+
+// ---------- inloggen (demo: een dev-token per inwoner) ----------
+async function login(persona) {
+  S.me = persona.id;
+  S.token = "dev:" + persona.id + Object.entries(persona.claims || {}).map(([k, v]) => `|${k}=${v}`).join("");
+  S.res.clear(); S.log.clear(); S.requests = 0; S.acts = 0; S.events = 0;
+  try { localStorage.setItem("mijn-demodam-wie", persona.id); } catch {}
+  const { profiles } = await api("/profiles");
+  for (const p of profiles) Object.assign(S.titles, p.titles || {});
+  await connect(0);
+  render();
+}
+(async () => {
+  const cfg = await fetch("/ui/config").then((r) => r.json());
+  S.personas = cfg.personas || [];
+  const inwoners = S.personas.filter((p) => ["inwoner", "curator"].includes(p.claims?.rol));
+  const sel = document.getElementById("who");
+  sel.innerHTML = inwoners.map((p) => `<option value="${esc(p.id)}">${esc(p.label)}</option>`).join("");
+  let saved; try { saved = localStorage.getItem("mijn-demodam-wie"); } catch {}
+  sel.value = inwoners.some((p) => p.id === saved) ? saved : (inwoners.find((p) => p.id.endsWith("/jan")) || inwoners[0])?.id;
+  sel.onchange = () => login(inwoners.find((p) => p.id === sel.value));
+  if (sel.value) login(inwoners.find((p) => p.id === sel.value));
+  else document.getElementById("view").innerHTML = `<p class="empty">Geen inwoners gevonden. Draait OpenEvents in dev-modus met de voorbeeldprofielen?</p>`;
+})();
+</script>
+</body>
+</html>
