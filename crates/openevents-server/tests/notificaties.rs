@@ -53,6 +53,12 @@ async fn fake_open_zaak(
             }),
         )
         .route(
+            "/catalogi/api/v1/statustypen/{id}",
+            get(|Path(id): Path<String>| async move {
+                Json(json!({ "omschrijving": id.replace('-', " ") }))
+            }),
+        )
+        .route(
             "/zaken/api/v1/{resource}/{id}",
             get(
                 move |Path((resource, id)): Path<(String, String)>, headers: HeaderMap| {
@@ -313,13 +319,19 @@ async fn notificaties_become_a_zaakspiegel() {
         types,
         [
             "nl.vng.zgw.zaken.zaak.create",
+            // The zaak gets the name of its status from the catalogus.
+            "nl.vng.zgw.zaken.status.create",
             "nl.vng.zgw.zaken.rol.create",
             "nl.vng.zgw.zaken.zaak.partial_update"
         ],
         "{tl}"
     );
     assert_eq!(
-        tl["events"][2]["data"]["patch"],
+        tl["events"][1]["data"]["patch"],
+        json!({ "statusOmschrijving": "in behandeling" })
+    );
+    assert_eq!(
+        tl["events"][3]["data"]["patch"],
         json!({ "einddatum": "2026-11-12" })
     );
     let (_, z) = call(
@@ -461,6 +473,31 @@ async fn import_mirrors_zaken_from_before_the_abonnement() {
         .map(|r| r["_meta"]["type"].as_str().unwrap())
         .collect();
     assert!(types.contains(&"nl.vng.zgw.zaak"), "{b}");
+    // The zaak knows the name of its status, from the catalogus.
+    let z = b["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["_meta"]["type"] == "nl.vng.zgw.zaak")
+        .unwrap();
+    assert_eq!(z["statusOmschrijving"], "in behandeling");
+    // Events carry the original moment.
+    let (_, ev) = call(
+        &app,
+        "GET",
+        "/events?format=json",
+        "Bearer dev:urn:admin",
+        None,
+    )
+    .await;
+    assert!(
+        ev["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["time"] == "2026-11-10T10:00:00Z"),
+        "{ev}"
+    );
     // Again: nothing new.
     let (_, again) = openevents_server::notificaties::import_zaken(&cfg, &register, &api)
         .await

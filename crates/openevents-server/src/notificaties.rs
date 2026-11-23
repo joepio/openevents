@@ -192,6 +192,20 @@ impl NotificatiesConfig {
         .ok()
     }
 
+    /// Names that only live in the catalogus, copied on the resource: the
+    /// `statustypeOmschrijving` of a status ("Ontvangen", "In behandeling").
+    async fn enrich(&self, resource: &str, r: &mut Value) {
+        if resource == "status" {
+            if let Some(url) = r["statustype"].as_str().map(String::from) {
+                if let Ok(st) = self.fetch(&url).await {
+                    if let Some(o) = st["omschrijving"].as_str() {
+                        r["statustypeOmschrijving"] = json!(o);
+                    }
+                }
+            }
+        }
+    }
+
     async fn fetch(&self, url: &str) -> Result<Value, String> {
         let mut req = self.client.get(url).header("Accept-Crs", "EPSG:4326");
         if let Some(t) = self.zgw_token() {
@@ -347,6 +361,7 @@ pub async fn handle(
             // A create, or a change to something we missed: mirror it whole.
             actie = "create".into();
             new_resource = cfg.fetch(&n.resource_url).await?;
+            cfg.enrich(&n.resource, &mut new_resource).await;
             commits.push(json!({
                 "resourceId": n.resource_url,
                 "type": format!("nl.vng.zgw.{}", n.resource),
@@ -355,6 +370,7 @@ pub async fn handle(
         }
         (_, Some(old)) => {
             new_resource = cfg.fetch(&n.resource_url).await?;
+            cfg.enrich(&n.resource, &mut new_resource).await;
             if let Some(patch) = merge_patch(old, &new_resource) {
                 commits.push(json!({ "resourceId": n.resource_url, "patch": patch }));
             }
@@ -379,6 +395,18 @@ pub async fn handle(
                     list.push(json!(bsn));
                 }
                 zaak["initiatorBsn"] = Value::Array(list);
+            }
+            // Keep what the adapter added (initiatorBsn above), and give the zaak the
+            // name of its current status, so a portal does not have to look it up.
+            for k in ["initiatorBsn", "statusOmschrijving"] {
+                if zaak.get(k).is_none() && !old_zaak[k].is_null() {
+                    zaak[k] = old_zaak[k].clone();
+                }
+            }
+            if n.resource == "status" && zaak["status"] == n.resource_url {
+                if let Some(o) = new_resource["statustypeOmschrijving"].as_str() {
+                    zaak["statusOmschrijving"] = json!(o);
+                }
             }
             if let Some(patch) = merge_patch(&old_zaak, &zaak) {
                 commits.push(json!({ "resourceId": n.hoofd_object, "patch": patch }));
@@ -458,7 +486,23 @@ pub async fn import_zaken(
             aanmaakdatum: time.map(String::from),
             kenmerken: Value::Null,
         };
-        one(handle(cfg, register, n("zaak", &url, None)).await, &url);
+        // Events carry the original moment, so a history reads in the right order.
+        let day = |d: Option<&str>| {
+            d.map(|d| {
+                if d.len() == 10 {
+                    format!("{d}T00:00:00Z")
+                } else {
+                    d.to_string()
+                }
+            })
+        };
+        let zaak_time = day(zaak["registratiedatum"]
+            .as_str()
+            .or(zaak["startdatum"].as_str()));
+        one(
+            handle(cfg, register, n("zaak", &url, zaak_time.as_deref())).await,
+            &url,
+        );
         let q = format!("zaak={}", urlencoding(&url));
         // Oldest status first, so the zaak ends with its current status.
         let mut statussen = list_all(cfg, &format!("{api}/statussen?{q}"))
@@ -492,15 +536,11 @@ pub async fn import_zaken(
         ] {
             for r in list {
                 if let Some(u) = r["url"].as_str() {
-                    one(
-                        handle(
-                            cfg,
-                            register,
-                            n(resource, u, r["datumStatusGezet"].as_str()),
-                        )
-                        .await,
-                        u,
-                    );
+                    let t = day(r["datumStatusGezet"]
+                        .as_str()
+                        .or(r["registratiedatum"].as_str()))
+                    .or(zaak_time.clone());
+                    one(handle(cfg, register, n(resource, u, t.as_deref())).await, u);
                 }
             }
         }

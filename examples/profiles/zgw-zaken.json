@@ -61,6 +61,9 @@
             "items": {
               "type": "string"
             }
+          },
+          "statusOmschrijving": {
+            "type": "string"
           }
         }
       },
@@ -239,6 +242,7 @@
   },
   "actions": {
     "nl.vng.zgw.zaken.zaak.create": {
+      "title": "Zaak aangemaakt",
       "commits": [
         {
           "type": "nl.vng.zgw.zaak",
@@ -247,6 +251,7 @@
       ]
     },
     "nl.vng.zgw.zaken.zaak.update": {
+      "title": "Zaak bijgewerkt",
       "commits": [
         {
           "type": "nl.vng.zgw.zaak",
@@ -255,6 +260,7 @@
       ]
     },
     "nl.vng.zgw.zaken.zaak.partial_update": {
+      "title": "Zaak bijgewerkt",
       "commits": [
         {
           "type": "nl.vng.zgw.zaak",
@@ -263,6 +269,7 @@
       ]
     },
     "nl.vng.zgw.zaken.zaak.destroy": {
+      "title": "Zaak verwijderd",
       "commits": [
         {
           "type": "nl.vng.zgw.zaak",
@@ -271,6 +278,7 @@
       ]
     },
     "nl.vng.zgw.zaken.status.create": {
+      "title": "Status gewijzigd",
       "commits": [
         {
           "type": "nl.vng.zgw.status",
@@ -283,6 +291,7 @@
       ]
     },
     "nl.vng.zgw.zaken.status.update": {
+      "title": "Status bijgewerkt",
       "commits": [
         {
           "type": "nl.vng.zgw.status",
@@ -295,6 +304,7 @@
       ]
     },
     "nl.vng.zgw.zaken.status.partial_update": {
+      "title": "Status bijgewerkt",
       "commits": [
         {
           "type": "nl.vng.zgw.status",
@@ -307,6 +317,7 @@
       ]
     },
     "nl.vng.zgw.zaken.status.destroy": {
+      "title": "Status verwijderd",
       "commits": [
         {
           "type": "nl.vng.zgw.status",
@@ -319,6 +330,7 @@
       ]
     },
     "nl.vng.zgw.zaken.rol.create": {
+      "title": "Betrokkene toegevoegd",
       "commits": [
         {
           "type": "nl.vng.zgw.rol",
@@ -331,6 +343,7 @@
       ]
     },
     "nl.vng.zgw.zaken.rol.update": {
+      "title": "Betrokkene bijgewerkt",
       "commits": [
         {
           "type": "nl.vng.zgw.rol",
@@ -343,6 +356,7 @@
       ]
     },
     "nl.vng.zgw.zaken.rol.partial_update": {
+      "title": "Betrokkene bijgewerkt",
       "commits": [
         {
           "type": "nl.vng.zgw.rol",
@@ -355,6 +369,7 @@
       ]
     },
     "nl.vng.zgw.zaken.rol.destroy": {
+      "title": "Betrokkene verwijderd",
       "commits": [
         {
           "type": "nl.vng.zgw.rol",
@@ -367,6 +382,7 @@
       ]
     },
     "nl.vng.zgw.zaken.resultaat.create": {
+      "title": "Resultaat vastgesteld",
       "commits": [
         {
           "type": "nl.vng.zgw.resultaat",
@@ -379,6 +395,7 @@
       ]
     },
     "nl.vng.zgw.zaken.resultaat.update": {
+      "title": "Resultaat bijgewerkt",
       "commits": [
         {
           "type": "nl.vng.zgw.resultaat",
@@ -391,6 +408,7 @@
       ]
     },
     "nl.vng.zgw.zaken.resultaat.partial_update": {
+      "title": "Resultaat bijgewerkt",
       "commits": [
         {
           "type": "nl.vng.zgw.resultaat",
@@ -403,6 +421,7 @@
       ]
     },
     "nl.vng.zgw.zaken.resultaat.destroy": {
+      "title": "Resultaat verwijderd",
       "commits": [
         {
           "type": "nl.vng.zgw.resultaat",
@@ -415,6 +434,7 @@
       ]
     },
     "nl.vng.zgw.zaken.zaakinformatieobject.create": {
+      "title": "Document toegevoegd",
       "commits": [
         {
           "type": "nl.vng.zgw.zaakinformatieobject",
@@ -427,6 +447,7 @@
       ]
     },
     "nl.vng.zgw.zaken.zaakinformatieobject.update": {
+      "title": "Document bijgewerkt",
       "commits": [
         {
           "type": "nl.vng.zgw.zaakinformatieobject",
@@ -439,6 +460,7 @@
       ]
     },
     "nl.vng.zgw.zaken.zaakinformatieobject.partial_update": {
+      "title": "Document bijgewerkt",
       "commits": [
         {
           "type": "nl.vng.zgw.zaakinformatieobject",
@@ -451,6 +473,7 @@
       ]
     },
     "nl.vng.zgw.zaken.zaakinformatieobject.destroy": {
+      "title": "Document verwijderd",
       "commits": [
         {
           "type": "nl.vng.zgw.zaakinformatieobject",
@@ -463,6 +486,7 @@
       ]
     },
     "nl.vng.zgw.zaken.zaakobject.create": {
+      "title": "Object toegevoegd",
       "commits": [
         {
           "type": "nl.vng.zgw.zaakobject",
@@ -475,6 +499,7 @@
       ]
     },
     "nl.vng.zgw.zaken.zaakobject.update": {
+      "title": "Object bijgewerkt",
       "commits": [
         {
           "type": "nl.vng.zgw.zaakobject",
@@ -487,6 +512,7 @@
       ]
     },
     "nl.vng.zgw.zaken.zaakobject.partial_update": {
+      "title": "Object bijgewerkt",
       "commits": [
         {
           "type": "nl.vng.zgw.zaakobject",
@@ -499,6 +525,7 @@
       ]
     },
     "nl.vng.zgw.zaken.zaakobject.destroy": {
+      "title": "Object verwijderd",
       "commits": [
         {
           "type": "nl.vng.zgw.zaakobject",

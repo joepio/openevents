@@ -189,13 +189,14 @@ function title(r) {
 function status(r) {
   const s = r.state;
   if (kind(r) === "gesprek") return s.momentEindeGesprek ? "afgesloten" : "open";
-  return s.status || (s.einddatum ? "afgerond" : "");
+  if (s.einddatum) return "afgerond";
+  return s.statusOmschrijving || (/^https?:/.test(s.status || "") ? "" : s.status || "");
 }
 const zaakOf = (r) => r.state.zaak || r.state.aanleidingZaak || r.state.melding || r.state.aanvraag;
 const day = (t) => t ? new Date(t).toLocaleDateString("nl-NL", { day: "numeric", month: "short", year: "numeric" }) : "";
 const date = (t) => t ? new Date(t).toLocaleDateString("nl-NL", { day: "numeric", month: "long", year: "numeric" }) : "";
 const time = (t) => t ? new Date(t).toLocaleString("nl-NL", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
-const name = (id) => (id === S.me && (S.claims.given_name || S.claims.name)) || (S.personas.find((p) => p.id === id)?.label.split(" (")[0]) || (id || "").split("/").pop().replace(/^./, (c) => c.toUpperCase());
+const name = (id) => (/^urn:/.test(id || "") && "de gemeente") || (id === S.me && (S.claims.given_name || S.claims.name)) || (S.personas.find((p) => p.id === id)?.label.split(" (")[0]) || (id || "").split("/").pop().replace(/^./, (c) => c.toUpperCase());
 
 // ---------- weergave ----------
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -209,7 +210,7 @@ const row = (r, sub) => `<li><a class="row${S.flash.has(r.id) ? " flash" : ""}" 
 const list = (items, f, none = "Niets.") => items.length ? `<ul class="rows">${items.map(f).join("")}</ul>` : `<p class="empty">${none}</p>`;
 const lastBijdrage = (g) => all("bijdrage").filter((b) => b.state.gesprek === g.id).sort(newest)[0];
 const subTaak = (t) => t.state.deadline ? "Uiterlijk " + date(t.state.deadline) : t.state.toelichting || "";
-const subZaak = (z) => [z.state.zaaknummer, z.state.adres].filter(Boolean).join(" · ");
+const subZaak = (z) => [z.state.zaaknummer || z.state.identificatie, z.state.adres].filter(Boolean).join(" · ");
 const subGesprek = (g) => lastBijdrage(g)?.state.tekstGespreksBijdrage || "";
 
 // Wat van mij is, per soort; ook de tellers in het menu.
@@ -260,8 +261,9 @@ function timeline(ids) {
       S.log.set(id, [...events, ...live.filter((e) => !known.has(e.id))]);
     }).catch(() => {}))).then(render);
   }
-  const events = ids.flatMap((id) => S.log.get(id) || []).sort((a, b) => +a.sequence - +b.sequence);
-  return `<ul class="timeline">${events.map((e) => `<li><div class="when">${time(e.time)}</div>${esc(S.titles[e.type] || e.type.split(".").slice(-2).join(" "))} <span class="when">door ${esc(name(e.actor))}</span></li>`).join("")}</ul>`;
+  const events = ids.flatMap((id) => S.log.get(id) || []).sort((a, b) => (a.time || "").localeCompare(b.time || "") || +a.sequence - +b.sequence);
+  const what = (e) => (S.titles[e.type] || e.type.split(".").slice(-2).join(" ")) + (e.data?.resourceData?.statustypeOmschrijving ? ": " + e.data.resourceData.statustypeOmschrijving : "");
+  return `<ul class="timeline">${events.map((e) => `<li><div class="when">${time(e.time)}</div>${esc(what(e))} <span class="when">door ${esc(name(e.actor))}</span></li>`).join("")}</ul>`;
 }
 
 function chat(g) {
@@ -276,7 +278,7 @@ function detail(id) {
   const r = S.res.get(id);
   if (!r) return `<p class="empty">Niet gevonden, of (nog) niet zichtbaar voor u.</p>`;
   const k = kind(r), s = r.state;
-  const facts = [["Zaaknummer", s.zaaknummer || s.identificatie], ["Status", status(r)], ["Adres", s.adres], ["Ingediend", date(s.ingediend || s.gemeld || s.aanvangsmomentGesprek || s.aangemaakt)],
+  const facts = [["Zaaknummer", s.zaaknummer || s.identificatie], ["Status", status(r)], ["Adres", s.adres], ["Ingediend", date(s.ingediend || s.gemeld || s.aanvangsmomentGesprek || s.aangemaakt || s.registratiedatum || s.startdatum)],
     ["Uiterlijke beslisdatum", date(s.uiterlijkeBeslisdatum)], ["Deadline", date(s.deadline)], ["Toelichting", s.toelichting || s.omschrijving], ["Besluit", s.besluit?.uitkomst || s.besluit]]
     .filter(([, v]) => v && typeof v !== "object");
   const parent = zaakOf(r) && S.res.get(zaakOf(r));
