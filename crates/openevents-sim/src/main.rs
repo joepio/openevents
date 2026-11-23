@@ -4,7 +4,7 @@
 //!
 //! Every zaak is a scenario: a list of steps with realistic gaps between them. Meldingen
 //! come in via a meldingen-API (Signalen) or the KCC, aanvragen via the Omgevingsloket,
-//! and gesprekken are linked to their zaak via `aanleiding.zaak`. Every actor posts with
+//! and gesprekken are linked to their zaak via `aanleidingZaak`. Every actor posts with
 //! its own dev token, so the read and write rules of the profiles apply exactly as for
 //! real clients.
 //!
@@ -159,14 +159,21 @@ impl Seq {
     ) {
         self.at(after, actor, kind, subject, label, json!({ "patch": data }));
     }
-    /// Start a gesprek; `initiatiefnemer` becomes the first deelname.
-    fn gesprek(&mut self, after: i64, actor: &Actor, g: &str, label: &str, mut data: Value) {
-        let first = data
-            .as_object_mut()
-            .and_then(|o| o.remove("initiatiefnemer"))
-            .unwrap_or(Value::Null);
+    /// Start a gesprek; `initiatiefnemer` becomes the first deelname. The scenarios
+    /// write `onderwerp` and `aanleiding.zaak`; here they get the names from the lab
+    /// schema (`gespreksonderwerp`, `aanleidingZaak`).
+    fn gesprek(&mut self, after: i64, actor: &Actor, g: &str, label: &str, data: Value) {
+        let first = deelname_van(&data["initiatiefnemer"]);
         self.deelnames.push((g.to_string(), vec![first.clone()]));
-        data["deelnames"] = json!([first]);
+        let zaak = data["aanleiding"]["zaak"].clone();
+        let mut data = json!({
+            "gespreksonderwerp": data["onderwerp"],
+            "team": data["team"],
+            "gespreksdeelnames": [first],
+        });
+        if zaak.is_string() {
+            data["aanleidingZaak"] = zaak;
+        }
         self.at(
             after,
             actor,
@@ -179,6 +186,9 @@ impl Seq {
     /// A bijdrage is its own resource, pointing at its gesprek.
     fn bijdrage(&mut self, after: i64, actor: &Actor, g: &str, label: &str, mut data: Value) {
         data["gesprek"] = json!(g);
+        if let Some(t) = data.as_object_mut().and_then(|o| o.remove("tekst")) {
+            data["tekstGespreksBijdrage"] = t;
+        }
         self.create_new(
             after,
             actor,
@@ -189,6 +199,7 @@ impl Seq {
     }
     /// Deelnames are a small list: the client sends all of it.
     fn deelname(&mut self, after: i64, actor: &Actor, g: &str, label: &str, d: Value) {
+        let d = deelname_van(&d);
         let list = match self.deelnames.iter_mut().find(|(id, _)| id == g) {
             Some((_, l)) => {
                 l.push(d);
@@ -202,7 +213,7 @@ impl Seq {
             &format!("{G}.deelname.toegevoegd"),
             g,
             label,
-            json!({ "deelnames": list }),
+            json!({ "gespreksdeelnames": list }),
         );
     }
     /// A date `days` after a step that happens `after` minutes from now in this zaak.
@@ -442,6 +453,22 @@ const WMO: &[(&str, &str, &str)] = &[
         "Ik heb een reparatieverzoek gedaan bij de leverancier, zij bellen u.",
     ),
 ];
+
+/// A deelname as in the lab schema: a medewerker is an actor, everyone else a partij.
+fn deelname_van(d: &Value) -> Value {
+    let id = d["partij"].as_str().unwrap_or_default();
+    let slug = id.rsplit('/').next().unwrap_or(id);
+    let mut c = slug.chars();
+    let naam = c
+        .next()
+        .map(|f| f.to_uppercase().collect::<String>() + c.as_str())
+        .unwrap_or_default();
+    if d["rol"] == "behandelaar" {
+        json!({ "type": "actor", "actor": id, "naam": naam })
+    } else {
+        json!({ "type": "partij", "partij": id, "naam": naam })
+    }
+}
 
 struct World {
     rng: StdRng,

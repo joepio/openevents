@@ -265,7 +265,7 @@ const SOORT = { taak: "Taak", zaak: "Zaak", aanvraag: "Aanvraag", melding: "Meld
 const DONE = ["afgerond", "afgehandeld", "besloten", "afgesloten", "ingetrokken", "vervallen"];
 const short = (type) => (type || "").split(".").pop();
 function label(item) {
-  for (const k of ["titel", "onderwerp", "zaaknummer", "identificatie", "adviseur", "omschrijving", "categorie", "tekst"]) if (typeof item[k] === "string" && item[k]) return item[k];
+  for (const k of ["titel", "gespreksonderwerp", "onderwerp", "zaaknummer", "identificatie", "adviseur", "omschrijving", "categorie", "tekstGespreksBijdrage", "tekst"]) if (typeof item[k] === "string" && item[k]) return item[k];
   return item._meta ? item._meta.subject : "";
 }
 function who(a) {
@@ -280,14 +280,14 @@ function detail(item) {
   return v ? (v.length > 70 ? v.slice(0, 70) + "…" : v) : "";
 }
 function statusBadge(item) {
-  const st = item.status || (item.einddatum ? "afgesloten" : "");
+  const st = item.status || (item.einddatum || item.momentEindeGesprek ? "afgesloten" : (item.aanvangsmomentGesprek ? "open" : ""));
   if (!st || typeof st !== "string" || st.startsWith("http")) return null;
   const done = ["afgerond", "afgehandeld", "besloten", "afgesloten", "ingetrokken", "vervallen"].includes(st);
   return el("span", { class: "badge " + (done ? "ok" : "warn") }, st);
 }
 const when = (t) => (t || "").replace("T", " ").slice(0, 16);
 const soort = (type) => SOORT[short(type)] || short(type);
-const isDone = (item) => DONE.includes(item.status) || !!item.einddatum;
+const isDone = (item) => DONE.includes(item.status) || !!item.einddatum || !!item.momentEindeGesprek;
 const ov = { stream: null, timer: null, selected: null, labels: {}, view: "mijn" };
 const ACTIE = { create: "aangemaakt", update: "gewijzigd", partial_update: "gewijzigd", destroy: "verwijderd" };
 function actionTitle(type) {
@@ -351,7 +351,7 @@ function nameOf(v) {
 }
 function show(v) {
   if (v === null || v === undefined) return "";
-  if (Array.isArray(v)) return v.map(x => (x && typeof x === "object") ? (nameOf(x.partij) || show(x)) + (x.rol ? " (" + x.rol + ")" : "") : nameOf(x)).join(", ");
+  if (Array.isArray(v)) return v.map(x => (x && typeof x === "object") ? (x.naam || nameOf(x.partij) || show(x)) + (x.rol ? " (" + x.rol + ")" : "") : nameOf(x)).join(", ");
   if (typeof v === "object") {
     if (v.type === "Point") return "kaartpunt";
     return Object.entries(v).filter(([k]) => k !== "rol" || !v.partij).map(([k, x]) => (k === "partij" ? "" : k + ": ") + (typeof x === "object" ? show(x) : nameOf(x))).join(", ");

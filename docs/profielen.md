@@ -9,7 +9,7 @@ Elk event is een commit: "maak deze resource", "verander deze velden" of "verwij
 ```json
 { "specversion": "1.0", "id": "…", "source": "https://mijn.demodam.nl",
   "type": "nl.vng.gesprekken.bijdrage.toegevoegd", "subject": "urn:uuid:bijdrage-7",
-  "data": { "resourceData": { "gesprek": "urn:uuid:gesprek-1", "tekst": "Wanneer komt de monteur?" } } }
+  "data": { "resourceData": { "gesprek": "urn:uuid:gesprek-1", "tekstGespreksBijdrage": "Wanneer komt de monteur?" } } }
 ```
 
 `data` heeft `resourceId` (standaard het `subject`), bij een nieuwe resource het `type`, en precies een van:
@@ -25,22 +25,25 @@ Optioneel `previousCommit`: de laatste commit die de client zag. Klopt die niet 
 ```json
 {
   "id": "nl.vng.gesprekken",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "types": {
     "nl.vng.gesprekken.gesprek": {
-      "schema": { "…": "JSON Schema van de stand" },
-      "queryable": ["status", "team", "deelnames.partij", "aanleiding.zaak"],
+      "schema": { "allOf": [
+        { "$ref": "https://raw.githubusercontent.com/VNG-Realisatie/vng-api-lab/main/schemas/gesprekken/next.json#/$defs/Gesprek" },
+        { "properties": { "team": { "type": "string" }, "afsluitreden": { "type": "string" } } }
+      ] },
+      "queryable": ["gespreksonderwerp", "team", "aanleidingZaak", "gespreksdeelnames.partij", "momentEindeGesprek"],
+      "references": ["aanleidingZaak"],
       "rules": {
-        "read":   "deelnames.partij = actor() OR team = actor('team') OR actor('rol') = 'kcc'",
-        "create": "deelnames.partij = actor() OR team = actor('team')",
+        "read":   "gespreksdeelnames.partij = actor() OR gespreksdeelnames.actor = actor() OR team = actor('team') OR actor('rol') = 'kcc'",
         "write":  "team = actor('team')",
-        "fields": [ { "when": "actor('rol') = 'kcc'", "show": ["onderwerp", "status", "team"] } ]
+        "fields": [ { "when": "actor('rol') = 'kcc'", "show": ["gespreksonderwerp", "aanleidingZaak", "team", "momentEindeGesprek"] } ]
       }
     },
     "nl.vng.gesprekken.bijdrage": {
-      "schema": { "…": "gesprek, tekst, door, tijd" },
-      "queryable": ["gesprek", "door", "tijd"],
-      "rules": { "read": "gesprek.deelnames.partij = actor() OR gesprek.team = actor('team')" }
+      "schema": { "$ref": "https://raw.githubusercontent.com/VNG-Realisatie/vng-api-lab/main/schemas/gesprekken/next.json#/$defs/Gespreksbijdrage" },
+      "references": ["gesprek"],
+      "rules": { "read": "gesprek.gespreksdeelnames.partij = actor() OR gesprek.gespreksdeelnames.actor = actor() OR gesprek.team = actor('team')" }
     }
   },
   "actions": {
@@ -48,17 +51,17 @@ Optioneel `previousCommit`: de laatste commit die de client zag. Klopt die niet 
       "title": "Bijdrage plaatsen",
       "commits": [ {
         "type": "nl.vng.gesprekken.bijdrage", "op": "create",
-        "fields": ["gesprek", "tekst", "automatisch"],
-        "set": { "door": "$actor", "tijd": "$time" },
-        "rule": "(gesprek.deelnames.partij = actor() OR gesprek.team = actor('team')) AND gesprek.status = 'open'"
+        "fields": ["gesprek", "tekstGespreksBijdrage", "isReactieOp", "bijlagen", "automatisch"],
+        "set": { "verzender": "$actor", "leveringsmoment": "$time" },
+        "rule": "(gesprek.gespreksdeelnames.partij = actor() OR gesprek.gespreksdeelnames.actor = actor() OR gesprek.team = actor('team')) AND gesprek.momentEindeGesprek IS NULL"
       } ]
     },
     "nl.vng.gesprekken.gesprek.afgesloten": {
       "commits": [ {
         "type": "nl.vng.gesprekken.gesprek", "op": "update",
-        "fields": ["afsluitreden"],
-        "set": { "status": "afgesloten", "afgesloten": { "door": "$actor", "tijd": "$time" } },
-        "rule": "(deelnames.partij = actor() OR team = actor('team')) AND status = 'open'"
+        "fields": ["afsluitreden", "contactmoment"],
+        "set": { "momentEindeGesprek": "$time" },
+        "rule": "(gespreksdeelnames.partij = actor() OR gespreksdeelnames.actor = actor() OR team = actor('team')) AND momentEindeGesprek IS NULL"
       } ]
     }
   }
@@ -69,10 +72,16 @@ Het volledige voorbeeld staat in `examples/profiles/gesprekken.json`.
 
 ### Types
 
-- `schema`: JSON Schema van de stand. Elke commit wordt daartegen gecontroleerd, na het toepassen.
+- `schema`: JSON Schema van de stand. Elke commit wordt daartegen gecontroleerd, na het toepassen. Liefst een verwijzing naar een gedeeld schema, zie hieronder.
 - `queryable`: velden waarop een client mag filteren. Een veld dat naar een andere resource verwijst (zoals `gesprek`), maakt ook paden erdoorheen mogelijk (`gesprek.status`).
 - `rules`: wie mag lezen (`read`), aanmaken (`create`) en wijzigen (`write`), en welke velden je ziet (`fields`). Zie [autorisatie](autorisatie.md).
 - `allowCommits: true`: dit type accepteert ook een kale `json.commit` zonder handeling, met alleen de regels van het type. Standaard staat dat uit: een domein met betekenis werkt met handelingen.
+
+### Gedeelde schema's
+
+Hoe een gesprek of bijdrage eruitziet, hoort niet in het profiel maar op één gedeelde plek, het VNG API Lab (`schemas/{domein}/next.json`). Het profiel verwijst ernaar met `$ref` en voegt toe wat de lab niet heeft: de handelingen, de regels, de verwijzingen en eventueel eigen velden (met `allOf`, zoals `team` hierboven).
+
+Bij het registreren haalt OpenEvents de schema's op en slaat het profiel op met die schema's erin, plus de bron-URL's in `schemaSources`. Daarna heeft het register het netwerk niet meer nodig, en komt een wijziging in de lab pas binnen met een nieuwe profielversie. Een lokale kopie gaat voor: met `OPENEVENTS_SCHEMAS=<map>` leest OpenEvents `https://host/pad` uit `<map>/host/pad`. De voorbeelden gebruiken `examples/schemas`, met een kopie van het lab-schema voor Gesprekken.
 
 ### Handelingen
 
@@ -87,7 +96,7 @@ Een handeling met meerdere commits is één transactie: "gesprek starten" maakt 
 
 ### Verwijzingen
 
-Een regel of filter mag een verwijzing volgen: in `gesprek.deelnames.partij` is `gesprek` een veld met de id van een andere resource, en het register leest die resource. Regels in het profiel zien alles. Een filter van een client volgt een verwijzing alleen als de lezer die resource zelf mag lezen, en ziet daarvan alleen de velden die hij mag zien. Een pad volgt hooguit drie verwijzingen.
+Een regel of filter mag een verwijzing volgen: in `gesprek.gespreksdeelnames.partij` is `gesprek` een veld met de id van een andere resource, en het register leest die resource. Regels in het profiel zien alles. Een filter van een client volgt een verwijzing alleen als de lezer die resource zelf mag lezen, en ziet daarvan alleen de velden die hij mag zien. Een pad volgt hooguit drie verwijzingen.
 
 Een type noemt zijn verwijzingen in `references` (bijvoorbeeld `["gesprek"]` bij een bijdrage, `["zaak"]` bij een taak of een ZGW-status). Daarop kun je altijd filteren, en het register gebruikt ze voor twee leesvragen:
 

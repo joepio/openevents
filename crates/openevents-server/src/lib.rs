@@ -4,6 +4,7 @@ pub mod auth;
 pub mod mijn;
 pub mod notificaties;
 pub mod openapi;
+pub mod schemas;
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -31,6 +32,8 @@ pub struct AppState {
     pub tickets: Arc<Tickets>,
     /// `POST /notificaties`, only when configured.
     pub notificaties: Option<Arc<NotificatiesConfig>>,
+    /// Shared JSON Schemas that profiles refer to (`$ref` to the VNG API Lab).
+    pub schemas: Arc<schemas::Schemas>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -532,6 +535,22 @@ async fn put_profile(
             "Body must be a profile (JSON).",
             None,
         );
+    };
+    // Only an administrator makes the register fetch schemas.
+    let body = if actor.admin {
+        match state.schemas.resolve_profile(body).await {
+            Ok(b) => b,
+            Err(e) => {
+                return problem(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "Rejected, nothing stored",
+                    &format!("Schema could not be loaded: {e}"),
+                    None,
+                )
+            }
+        }
+    } else {
+        body
     };
     match state.register.put_profile(&actor, &id, body) {
         Ok(v) => Json(v).into_response(),

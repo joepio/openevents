@@ -86,6 +86,7 @@ docker run -p 8080:8080 -v openevents:/data \
 | `OPENEVENTS_ADMINS` | actors (komma's) die profielen mogen registreren |
 | `OPENEVENTS_PROFILES` | map met profielen (`.json`) die bij het starten worden geïnstalleerd |
 | `OPENEVENTS_OIDC_ISSUER`, `…_JWKS_URL`, `…_AUDIENCE`, `OPENEVENTS_ACTOR_CLAIM` | tokens van een eigen IdP (OAuth2 client credentials voor leveranciers), zie [docs/aansluiten.md](docs/aansluiten.md) |
+| `OPENEVENTS_SCHEMAS` | map met lokale kopieën van gedeelde schema's (`host/pad`); standaard `schemas` naast `OPENEVENTS_PROFILES`, zie [docs/profielen.md](docs/profielen.md) |
 | `OPENEVENTS_NOTIFICATIES_AUTH`, `OPENEVENTS_ZGW_CLIENT_ID`, `OPENEVENTS_ZGW_SECRET` | ZGW-notificaties als events binnenhalen via `POST /notificaties`, zie [docs/aansluiten.md](docs/aansluiten.md) |
 
 Een gesprek starten en volgen:

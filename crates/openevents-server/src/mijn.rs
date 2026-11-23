@@ -413,7 +413,7 @@ fn contactmomenten(reg: &Register, actor: &Actor, z: &Zaak) -> Vec<Value> {
             json!({
                 "datum": date(g["_meta"]["created"].as_str()).unwrap_or_default(),
                 "kanaal": "vraag",
-                "tekst": s(&g, "onderwerp").unwrap_or("Gesprek"),
+                "tekst": s(&g, "gespreksonderwerp").unwrap_or("Gesprek"),
             })
         })
         .collect()

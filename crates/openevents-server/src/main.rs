@@ -22,6 +22,17 @@ async fn main() {
     let store = RedbStore::open(&data_dir.join("openevents.redb")).expect("open store");
     let register = Arc::new(Register::open(Arc::new(store)).expect("open register"));
 
+    // Shared schemas: OPENEVENTS_SCHEMAS, or a `schemas` directory next to the profiles.
+    let schemas = Arc::new(match std::env::var("OPENEVENTS_SCHEMAS") {
+        Ok(d) => openevents_server::schemas::Schemas::new(Some(PathBuf::from(d))),
+        Err(_) => openevents_server::schemas::Schemas::new(
+            std::env::var("OPENEVENTS_PROFILES")
+                .ok()
+                .map(|p| PathBuf::from(p).join("../schemas"))
+                .filter(|p| p.is_dir()),
+        ),
+    });
+
     // Profiles in OPENEVENTS_PROFILES (a directory of .json files) are installed at start.
     if let Ok(dir) = std::env::var("OPENEVENTS_PROFILES") {
         let system = Actor {
@@ -41,6 +52,10 @@ async fn main() {
                 serde_json::from_slice(&std::fs::read(&path).expect("read profile"))
                     .expect("profile is JSON");
             let id = raw["id"].as_str().unwrap_or_default().to_string();
+            let raw = match schemas.resolve_profile(raw).await {
+                Ok(r) => r,
+                Err(e) => panic!("profile {}: {e}", path.display()),
+            };
             match register.put_profile(&system, &id, raw) {
                 Ok(_) => tracing::info!("profile {id} installed from {}", path.display()),
                 Err(e) => panic!("profile {} is invalid: {e:?}", path.display()),
@@ -71,6 +86,7 @@ async fn main() {
         auth,
         tickets: Arc::new(Tickets::default()),
         notificaties,
+        schemas,
     };
     let app = router(state).layer(CorsLayer::permissive());
 

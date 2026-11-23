@@ -30,6 +30,9 @@ fn app_with(kv: Arc<dyn KvStore>) -> Router {
         register,
         auth,
         tickets: Arc::new(Tickets::default()),
+        schemas: Arc::new(openevents_server::schemas::Schemas::new(Some(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/schemas").into(),
+        ))),
         notificaties: None,
     })
 }
@@ -114,10 +117,10 @@ async fn start_gesprek(app: &Router) {
             "nl.vng.gesprekken.gesprek.gestart",
             G1,
             json!({ "type": "nl.vng.gesprekken.gesprek", "resourceData": {
-                "onderwerp": "Vraag over mijn aanvraag",
+                "gespreksonderwerp": "Vraag over mijn aanvraag",
                 "team": "wmo",
-                "aanleiding": { "zaak": "https://zaken.example.nl/zaken/1" },
-                "deelnames": [ { "partij": SUZANNE_ID, "rol": "inwoner" } ]
+                "aanleidingZaak": "https://zaken.example.nl/zaken/1",
+                "gespreksdeelnames": [ { "type": "partij", "partij": SUZANNE_ID, "naam": "Suzanne" } ]
             } }),
         )),
     )
@@ -131,7 +134,7 @@ fn bijdrage(id: &str, subject: &str, tekst: Value) -> Value {
         id,
         "nl.vng.gesprekken.bijdrage.toegevoegd",
         subject,
-        json!({ "resourceData": { "gesprek": G1, "tekst": tekst } }),
+        json!({ "resourceData": { "gesprek": G1, "tekstGespreksBijdrage": tekst } }),
     )
 }
 
@@ -172,10 +175,18 @@ async fn read_rules_decide_who_sees_a_gesprek() {
     let uri = format!("/subjects/{}", enc(G1));
     let (s, b, _) = call(&app, "GET", &uri, Some(SUZANNE), None).await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(b["status"], "open");
-    assert_eq!(b["deelnames"][0]["partij"], SUZANNE_ID);
-    // `set` in the action: the register fills in status and gestart.
-    assert!(b["gestart"].is_string());
+    assert!(b["momentEindeGesprek"].is_null());
+    assert_eq!(b["gespreksdeelnames"][0]["partij"], SUZANNE_ID);
+    // `set` in the action: the register fills in when it started.
+    assert!(b["aanvangsmomentGesprek"].is_string());
+    // The shape of a gesprek comes from the VNG API Lab, inlined when registered.
+    let (_, p, _) = call(&app, "GET", "/profiles/nl.vng.gesprekken", None, None).await;
+    let t = &p["types"]["nl.vng.gesprekken.gesprek"];
+    assert!(t["schemaSources"][0]
+        .as_str()
+        .unwrap()
+        .ends_with("/schemas/gesprekken/next.json"));
+    assert_eq!(t["schema"]["allOf"][0]["required"][0], "gespreksonderwerp");
     // A stranger gets the same answer as for something that does not exist.
     let (s, _, _) = call(&app, "GET", &uri, Some(KAREL), None).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
@@ -202,9 +213,9 @@ async fn actions_decide_what_a_commit_may_do() {
     let (s, b, _) = post(SUZANNE, bijdrage("e4", "urn:uuid:b-4", json!(42))).await;
     assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(b["invalidParams"][0]["code"], "schema");
-    // The server sets `door`; the client may not.
+    // The server sets `verzender`; the client may not.
     let (s, b, _) = post(SUZANNE, ev("e4b", "nl.vng.gesprekken.bijdrage.toegevoegd", "urn:uuid:b-4b",
-        json!({ "resourceData": { "gesprek": G1, "tekst": "x", "door": "https://id.example.nl/iemand" } }))).await;
+        json!({ "resourceData": { "gesprek": G1, "tekstGespreksBijdrage": "x", "verzender": "https://id.example.nl/iemand" } }))).await;
     assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(b["invalidParams"][0]["code"], "field-not-allowed");
     // An action only allows the commits it lists: no patching a gesprek with a bijdrage.
@@ -214,7 +225,7 @@ async fn actions_decide_what_a_commit_may_do() {
             "e4c",
             "nl.vng.gesprekken.bijdrage.toegevoegd",
             G1,
-            json!({ "patch": { "status": "afgesloten" } }),
+            json!({ "patch": { "afsluitreden": "klaar" } }),
         ),
     )
     .await;
@@ -229,7 +240,7 @@ async fn actions_decide_what_a_commit_may_do() {
     let (s, _, _) = post(SUZANNE, ev("e5", "nl.vng.onbekend", G1, json!({}))).await;
     assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
 
-    // Closing sets status and who closed it; after that no more bijdragen.
+    // Closing sets when it ended; after that no more bijdragen.
     let (s, b, _) = post(
         SUZANNE,
         ev(
@@ -252,8 +263,7 @@ async fn actions_decide_what_a_commit_may_do() {
         None,
     )
     .await;
-    assert_eq!(b["status"], "afgesloten");
-    assert_eq!(b["afgesloten"]["door"], SUZANNE_ID);
+    assert!(b["momentEindeGesprek"].is_string());
     assert_eq!(b["afsluitreden"], "beantwoord");
     // What used to be a projection (bijdragen, aantal) is a query.
     let (s, b, _) = call(
@@ -268,8 +278,8 @@ async fn actions_decide_what_a_commit_may_do() {
     .await;
     assert_eq!(s, StatusCode::OK, "{b}");
     assert_eq!(b["results"].as_array().unwrap().len(), 1);
-    assert_eq!(b["results"][0]["tekst"], "Hallo");
-    assert_eq!(b["results"][0]["door"], SUZANNE_ID);
+    assert_eq!(b["results"][0]["tekstGespreksBijdrage"], "Hallo");
+    assert_eq!(b["results"][0]["verzender"], SUZANNE_ID);
     // The event in the log: the action as type, the bijdrage as subject, the commit as data.
     let (_, b, _) = call(
         &app,
@@ -282,10 +292,10 @@ async fn actions_decide_what_a_commit_may_do() {
     let e = &b["events"][0];
     assert_eq!(e["type"], "nl.vng.gesprekken.bijdrage.toegevoegd");
     assert_eq!(e["data"]["type"], "nl.vng.gesprekken.bijdrage");
-    assert_eq!(e["data"]["resourceData"]["door"], SUZANNE_ID);
+    assert_eq!(e["data"]["resourceData"]["verzender"], SUZANNE_ID);
     // Gesprekken only accept their actions, not bare commits.
     let commit = json!({ "specversion": "1.0", "id": "c1", "source": "urn:test", "type": "json.commit", "subject": G1,
-        "data": { "resourceId": G1, "patch": { "status": "open" } } });
+        "data": { "resourceId": G1, "patch": { "momentEindeGesprek": null } } });
     let (s, b, _) = post(SUZANNE, commit).await;
     assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{b}");
     assert_eq!(b["invalidParams"][0]["code"], "commits-not-allowed");
@@ -305,9 +315,9 @@ async fn one_action_many_commits_and_references() {
             g,
             json!({ "commits": [
         { "resourceId": g, "type": "nl.vng.gesprekken.gesprek", "resourceData": {
-            "onderwerp": "Traplift", "team": "wmo", "deelnames": [ { "partij": SUZANNE_ID, "rol": "inwoner" } ] } },
+            "gespreksonderwerp": "Traplift", "team": "wmo", "gespreksdeelnames": [ { "type": "partij", "partij": SUZANNE_ID, "naam": "Suzanne" } ] } },
         { "resourceId": "urn:uuid:b-eerste", "type": "nl.vng.gesprekken.bijdrage",
-          "resourceData": { "gesprek": g, "tekst": tekst } }
+          "resourceData": { "gesprek": g, "tekstGespreksBijdrage": tekst } }
     ] }),
         )
     };
@@ -352,7 +362,7 @@ async fn one_action_many_commits_and_references() {
         "/query",
         Some(MERVE),
         Some(q(
-            "gesprek.onderwerp = 'Traplift' AND gesprek.status = 'open'",
+            "gesprek.gespreksonderwerp = 'Traplift' AND gesprek.momentEindeGesprek IS NULL",
         )),
     )
     .await;
@@ -363,12 +373,19 @@ async fn one_action_many_commits_and_references() {
         "POST",
         "/query",
         Some(KAREL),
-        Some(q("gesprek.onderwerp = 'Traplift'")),
+        Some(q("gesprek.gespreksonderwerp = 'Traplift'")),
     )
     .await;
     assert_eq!(b["results"].as_array().unwrap().len(), 0);
     // Not queryable: a field of the bijdrage that is not listed.
-    let (s, _, _) = call(&app, "POST", "/query", Some(MERVE), Some(q("tekst = 'x'"))).await;
+    let (s, _, _) = call(
+        &app,
+        "POST",
+        "/query",
+        Some(MERVE),
+        Some(q("tekstGespreksBijdrage = 'x'")),
+    )
+    .await;
     assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
@@ -710,7 +727,10 @@ async fn sse_catches_up_from_last_event_id_then_goes_live() {
     .await;
     assert_eq!(events[0]["id"], "e1");
     assert_eq!(events[1]["id"], "e2");
-    assert_eq!(events[1]["data"]["resourceData"]["tekst"], "Live");
+    assert_eq!(
+        events[1]["data"]["resourceData"]["tekstGespreksBijdrage"],
+        "Live"
+    );
 }
 
 #[tokio::test]
@@ -799,7 +819,7 @@ async fn everything_survives_a_restart() {
     )
     .await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(b["onderwerp"], "Vraag over mijn aanvraag");
+    assert_eq!(b["gespreksonderwerp"], "Vraag over mijn aanvraag");
     let (s, _, _) = call(
         &app,
         "POST",
@@ -827,7 +847,7 @@ async fn optional_fields_may_be_left_out() {
             "nl.vng.gesprekken.gesprek.gestart",
             G1,
             json!({ "type": "nl.vng.gesprekken.gesprek", "resourceData": {
-                "onderwerp": "Kort", "deelnames": [ { "partij": SUZANNE_ID, "rol": "inwoner" } ]
+                "gespreksonderwerp": "Kort", "gespreksdeelnames": [ { "type": "partij", "partij": SUZANNE_ID, "naam": "Suzanne" } ]
             } }),
         )),
     )
@@ -841,7 +861,7 @@ async fn optional_fields_may_be_left_out() {
         None,
     )
     .await;
-    assert!(b.get("team").is_none() && b.get("aanleiding").is_none());
+    assert!(b.get("team").is_none() && b.get("aanleidingZaak").is_none());
 }
 
 const KIM: &str = "dev:https://id.example.nl/kim|rol=kcc";
@@ -869,8 +889,8 @@ async fn field_rules_limit_what_kcc_sees() {
     )
     .await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(b["onderwerp"], "Vraag over mijn aanvraag");
-    assert!(b.get("deelnames").is_none());
+    assert_eq!(b["gespreksonderwerp"], "Vraag over mijn aanvraag");
+    assert!(b.get("gespreksdeelnames").is_none());
     assert_eq!(b["_meta"]["limited"], true);
     // The bijdrage itself is not for the KCC at all.
     let (s, _, _) = call(
@@ -893,18 +913,20 @@ async fn field_rules_limit_what_kcc_sees() {
         "POST",
         "/query",
         Some(KIM),
-        Some(json!({ "type": "nl.vng.gesprekken.gesprek", "filter": "status = 'open'" })),
+        Some(
+            json!({ "type": "nl.vng.gesprekken.gesprek", "filter": "momentEindeGesprek IS NULL" }),
+        ),
     )
     .await;
     assert_eq!(b["results"].as_array().unwrap().len(), 1);
-    assert!(b["results"][0].get("deelnames").is_none());
+    assert!(b["results"][0].get("gespreksdeelnames").is_none());
     // Filtering on a field KCC may not see is the same error as an unknown field.
     let (s, _, _) = call(
         &app,
         "POST",
         "/query",
         Some(KIM),
-        Some(json!({ "type": "nl.vng.gesprekken.gesprek", "filter": "deelnames.partij = 'x'" })),
+        Some(json!({ "type": "nl.vng.gesprekken.gesprek", "filter": "gespreksdeelnames.partij = 'x'" })),
     )
     .await;
     assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
@@ -917,7 +939,7 @@ async fn field_rules_limit_what_kcc_sees() {
         None,
     )
     .await;
-    assert_eq!(b["deelnames"][0]["partij"], SUZANNE_ID);
+    assert_eq!(b["gespreksdeelnames"][0]["partij"], SUZANNE_ID);
 }
 
 #[tokio::test]
@@ -1101,8 +1123,8 @@ async fn related_and_audit_follow_references() {
                 "nl.vng.gesprekken.gesprek.gestart",
                 g,
                 json!({ "type": "nl.vng.gesprekken.gesprek", "resourceData": {
-            "onderwerp": "Aanvulling nodig voor OV-1", "team": "vergunningen", "aanleiding": { "zaak": zaak },
-            "deelnames": [ { "partij": femke_id, "rol": "behandelaar" }, { "partij": jan_id, "rol": "inwoner" } ] } }),
+            "gespreksonderwerp": "Aanvulling nodig voor OV-1", "team": "vergunningen", "aanleidingZaak": zaak,
+            "gespreksdeelnames": [ { "type": "actor", "actor": femke_id, "naam": "Femke" }, { "type": "partij", "partij": jan_id, "naam": "Jan" } ] } }),
             ),
         ),
         (
@@ -1112,7 +1134,7 @@ async fn related_and_audit_follow_references() {
                 "nl.vng.gesprekken.bijdrage.toegevoegd",
                 "urn:uuid:b-ov-1",
                 json!({ "resourceData": {
-            "gesprek": g, "tekst": "Komt eraan." } }),
+            "gesprek": g, "tekstGespreksBijdrage": "Komt eraan." } }),
             ),
         ),
         (

@@ -18,6 +18,7 @@ Het idee is dat spec en code gelijk oplopen: elke wijziging in het lab heeft een
 | `patterns/event-stream` next | in PR #47 | SSE-contract |
 | `patterns/json-commit` next | in PR #49 | `POST /events` met `json.commit.transaction` |
 | `patterns/query` next | schets in PR #53 | `POST /query`; de filters gaan van CloudEvents-dialecten naar CQL2-JSON |
+| `schemas/gesprekken` next | voorstel, zie hieronder | de stand van gesprek en bijdrage; het profiel `nl.vng.gesprekken` verwijst ernaar met `$ref` |
 | `patterns/file-upload` next | op `main` | bijlagen via `dataref` |
 | `patterns/error-responses` v0.0.1 | op `main` | `problem+json` |
 | `patterns/federated-auth` next | op `main` | tokens van buiten, geen eigen login |

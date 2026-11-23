@@ -90,6 +90,22 @@ pub struct Profile {
     pub actions: HashMap<String, Action>,
 }
 
+/// Required fields of a schema, also through `allOf` (a profile that extends a shared
+/// schema).
+fn required_fields(schema: &Value) -> Vec<&str> {
+    let mut out: Vec<&str> = schema
+        .get("required")
+        .and_then(|r| r.as_array())
+        .map(|r| r.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    if let Some(all) = schema.get("allOf").and_then(|a| a.as_array()) {
+        for s in all {
+            out.extend(required_fields(s));
+        }
+    }
+    out
+}
+
 fn compile_schema(v: &Value, at: &str) -> Result<jsonschema::Validator, ProfileError> {
     jsonschema::validator_for(v)
         .map_err(|e| ProfileError(format!("{at}: invalid JSON Schema: {e}")))
@@ -176,12 +192,7 @@ impl Profile {
                             .collect()
                     })
                     .unwrap_or_default();
-                let required: Vec<&str> = def
-                    .get("schema")
-                    .and_then(|s| s.get("required"))
-                    .and_then(|r| r.as_array())
-                    .map(|r| r.iter().filter_map(|v| v.as_str()).collect())
-                    .unwrap_or_default();
+                let required = def.get("schema").map(required_fields).unwrap_or_default();
                 let part_of = references.iter().any(|r| required.contains(&r.as_str()));
                 let mut queryable: Option<Vec<String>> =
                     def.get("queryable").and_then(|q| q.as_array()).map(|q| {

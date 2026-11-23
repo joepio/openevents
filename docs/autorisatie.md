@@ -11,17 +11,17 @@ Per type staan in het profiel een leesregel, een aanmaak- en schrijfregel en eve
 ```yaml
 gesprek:
   read: >
-    deelnames.partij = actor()
-    OR aanleiding.zaak.zaaktype.team.leden = actor()
-  create: deelnames.partij = actor() OR team = actor('team')
+    gespreksdeelnames.partij = actor() OR gespreksdeelnames.actor = actor()
+    OR aanleidingZaak.zaaktype.team.leden = actor()
+  create: gespreksdeelnames.partij = actor() OR team = actor('team')
   write: team = actor('team')
   fields:
     - when: "actor('rol') = 'kcc'"
-      show: [onderwerp, status, team]
+      show: [gespreksonderwerp, team, momentEindeGesprek]
 bijdrage:
-  read: gesprek.deelnames.partij = actor() OR gesprek.team = actor('team')
+  read: gesprek.gespreksdeelnames.partij = actor() OR gesprek.team = actor('team')
 handeling bijdrage.toegevoegd:
-  rule: gesprek.deelnames.partij = actor() AND gesprek.status = 'open'
+  rule: gesprek.gespreksdeelnames.partij = actor() AND gesprek.momentEindeGesprek IS NULL
 ```
 
 De regels zijn [CQL2](query.md#filtertaal)-tekst, dezelfde taal als een query. Ze worden bij het registreren van het profiel geparst tot CQL2-JSON.
@@ -30,8 +30,8 @@ De regels zijn [CQL2](query.md#filtertaal)-tekst, dezelfde taal als een query. Z
 - `read` bepaalt welke onderwerpen je ziet: in query's, in views, op de stroom en in de tijdlijn.
 - `create` en `write` gelden voor handelingen zonder eigen `rule`, en voor een kale `json.commit` bij types met `allowCommits`.
 - De `rule` van een handeling bepaalt wie die handeling mag doen. Zo mag een inwoner een bijdrage plaatsen in een open gesprek waar hij deelnemer is, zonder het gesprek zelf te mogen wijzigen.
-- Een pad mag een verwijzing volgen: `gesprek.status` leest het gesprek waar de bijdrage naar wijst. In een filter van een client alleen als de lezer dat gesprek zelf mag zien.
-- Een pad door een lijst matcht als *een* element matcht, per vergelijking apart. `deelnames.partij = actor() AND deelnames.rol = 'curator'` kan dus waar zijn met de partij uit de ene deelname en de rol uit de andere. Wil je dat onderscheid, zet de rol dan in een eigen veld of in een eigen regel per handeling.
+- Een pad mag een verwijzing volgen: `gesprek.momentEindeGesprek` leest het gesprek waar de bijdrage naar wijst. In een filter van een client alleen als de lezer dat gesprek zelf mag zien.
+- Een pad door een lijst matcht als *een* element matcht, per vergelijking apart. `gespreksdeelnames.partij = actor() AND gespreksdeelnames.namens = 'x'` kan dus waar zijn met de partij uit de ene deelname en de rol uit de andere. Wil je dat onderscheid, zet het onderscheid dan in een eigen veld of in een eigen regel per handeling.
 - `fields` bepaalt welke velden je ziet. Zonder regel zie je alle velden van onderwerpen die je mag lezen.
 
 ## Rechten zijn relaties, en relaties zijn data
@@ -42,8 +42,8 @@ Zo zijn alle gevallen uit MijnGesprekken één regel:
 
 | Wie | Waarom die het ziet |
 |---|---|
-| inwoner | is deelnemer (`deelnames.partij`) |
-| curator, bewindvoerder | is deelnemer met die rol, en mag daarom ook schrijven |
+| inwoner | is deelnemer (`gespreksdeelnames.partij`) |
+| curator, bewindvoerder | is deelnemer, `namens` de inwoner, en mag daarom ook schrijven |
 | behandelaar | zit in het team van het zaaktype van de zaak |
 | KCC-medewerker | zit in het KCC-team, ziet alleen onderwerp en status (`fields`) |
 

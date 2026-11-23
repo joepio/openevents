@@ -80,6 +80,9 @@ fn app(register: Arc<Register>) -> Router {
             ..Default::default()
         },
         tickets: Arc::new(Tickets::default()),
+        schemas: Arc::new(openevents_server::schemas::Schemas::new(Some(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/schemas").into(),
+        ))),
         notificaties: Some(Arc::new(NotificatiesConfig {
             auth: AUTH.into(),
             zgw_client_id: Some("openevents".into()),

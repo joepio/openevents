@@ -54,6 +54,9 @@ fn app(issuer: &str) -> Router {
         register,
         auth,
         tickets: Arc::new(Tickets::default()),
+        schemas: Arc::new(openevents_server::schemas::Schemas::new(Some(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/schemas").into(),
+        ))),
         notificaties: None,
     })
 }
