@@ -30,6 +30,7 @@ header { border-bottom: 1px solid var(--line); }
 .brand { font-weight: 700; font-size: 28px; margin-right: auto; color: var(--ink); text-decoration: none; display: flex; align-items: center; gap: 12px; }
 .brand .mark { width: 14px; height: 44px; background: var(--brand); display: inline-block; }
 .who { display: flex; align-items: center; gap: 8px; }
+.who a { color: var(--link); }
 .who select { border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; background: var(--bg); color: var(--ink); }
 .crumbs { font-size: 15px; margin: 20px 0 8px; color: var(--muted); }
 .page { display: grid; grid-template-columns: 240px 1fr; gap: 48px; }
@@ -94,7 +95,7 @@ form.say textarea { flex: 1; min-height: 48px; border: 1px solid var(--muted); b
 <div class="demo"><span><b>Demo op OpenEvents.</b> Deze pagina leest alleen de eventstroom. De getoonde gegevens zijn fictief.</span><span id="live" class="pill">verbinden…</span></div>
 <header><div class="bar">
   <a class="brand" href="#/"><span class="mark"></span>Mijn Demodam</a>
-  <label class="who"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg><select id="who" aria-label="Ingelogd als"></select></label>
+  <div class="who"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg><span id="me"></span><select id="who" aria-label="Bekijk als" hidden></select><a href="#" id="login" hidden>Inloggen</a><a href="#" id="logout" hidden>Uitloggen</a></div>
 </div></header>
 <div class="page">
   <nav class="side" id="nav"></nav>
@@ -104,14 +105,17 @@ form.say textarea { flex: 1; min-height: 48px; border: 1px solid var(--muted); b
 
 <script id="app">
 // Mijn Demodam: een inwonerportaal dat alleen events kent.
-// Lezen: één stroom (GET /events) vanaf het begin, daarna live. De stand van elke
-// resource is zijn commits na elkaar toegepast. Doen: een handeling posten
-// (POST /events); het resultaat komt vanzelf terug via dezelfde stroom.
+// Lezen: één query naar wat van mij is (de mine-regels in de profielen), daarna één
+// stroom (GET /events) vanaf dat punt. Een event past de stand van een resource aan.
+// Doen: een handeling posten (POST /events); het resultaat komt terug via de stroom.
 
-const S = { token: "", me: "", res: new Map(), log: new Map(), titles: {}, requests: 0, acts: 0, events: 0, stream: null, flash: new Set() };
+const S = { token: "", me: "", claims: {}, res: new Map(), log: new Map(), logged: new Set(), titles: {}, requests: 0, acts: 0, history: 0, events: 0, stream: null, flash: new Set() };
+const store = (k, v) => { try { v === undefined ? sessionStorage.removeItem(k) : sessionStorage.setItem(k, JSON.stringify(v)); } catch {} };
+const stored = (k) => { try { return JSON.parse(sessionStorage.getItem(k)); } catch { return null; } };
 
 async function api(path, opts = {}) {
   S.requests++;
+  await fresh();
   const res = await fetch(path, { ...opts, headers: { "content-type": "application/json", authorization: "Bearer " + S.token, ...(opts.headers || {}) } });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.detail || body.title || "HTTP " + res.status);
@@ -126,16 +130,26 @@ function merge(a, p) {
   return out;
 }
 
-// Eén event toepassen: zo ontstaat de stand, zonder logica per soort.
+// Een resource uit de query: de stand en het event waar die bij hoort.
+function put(r) {
+  const { _meta: m, ...state } = r;
+  S.res.set(m.subject, { id: m.subject, type: m.type, state, updated: m.updated, seq: +m.sequence });
+}
+
+// Eén event toepassen: zo verandert de stand, zonder logica per soort.
 function apply(e) {
   S.events++;
   if (!e.data) return;
-  const d = e.data, id = d.resourceId || e.subject, cur = S.res.get(id);
-  if (d.deleted) S.res.delete(id);
-  else if (d.resourceData) S.res.set(id, { id, type: d.type || cur?.type, state: d.resourceData, updated: e.time });
-  else if (d.patch) S.res.set(id, { id, type: cur?.type || d.type, state: merge(cur?.state || {}, d.patch), updated: e.time });
-  (S.log.get(id) || S.log.set(id, []).get(id)).push(e);
+  const d = e.data, id = d.resourceId || e.subject, cur = S.res.get(id), seq = +e.sequence;
+  if (cur && seq <= cur.seq) return; // zat al in de query
+  if (!cur && !e.mine) return; // niet van mij (het register zegt het, met de mine-regel)
+  if (S.logged.has(id)) (S.log.get(id) || S.log.set(id, []).get(id)).push(e);
   S.flash.add(id);
+  if (d.deleted) return S.res.delete(id);
+  if (d.resourceData) return S.res.set(id, { id, type: d.type || cur?.type, state: d.resourceData, updated: e.time, seq });
+  if (d.patch && cur) return S.res.set(id, { ...cur, state: merge(cur.state, d.patch), updated: e.time, seq });
+  // Nieuw voor mij, maar alleen een wijziging (bijvoorbeeld: ik ben toegevoegd). Haal de stand op.
+  if (d.patch) api("/subjects/" + encodeURIComponent(id)).then((r) => { put(r); render(); }).catch(() => {});
 }
 
 async function connect(after = 0) {
@@ -163,8 +177,7 @@ const newId = () => "urn:uuid:" + crypto.randomUUID();
 const kind = (r) => (r.type || "").split(".").pop();
 const ZAAK = ["aanvraag", "melding", "zaak"];
 const DONE = ["besloten", "ingetrokken", "afgehandeld", "afgerond", "vervallen"];
-const has = (v, me) => v === me || (v && typeof v === "object" && Object.values(v).some((x) => has(x, me)));
-const mine = (r) => has(r.state, S.me);
+const mine = () => true; // de app laadt alleen wat van mij is
 const done = (r) => DONE.includes(r.state.status) || !!r.state.momentEindeGesprek || !!r.state.einddatum;
 const all = (k) => [...S.res.values()].filter((r) => kind(r) === k);
 const newest = (a, b) => (b.updated || "").localeCompare(a.updated || "");
@@ -182,7 +195,7 @@ const zaakOf = (r) => r.state.zaak || r.state.aanleidingZaak || r.state.melding 
 const day = (t) => t ? new Date(t).toLocaleDateString("nl-NL", { day: "numeric", month: "short", year: "numeric" }) : "";
 const date = (t) => t ? new Date(t).toLocaleDateString("nl-NL", { day: "numeric", month: "long", year: "numeric" }) : "";
 const time = (t) => t ? new Date(t).toLocaleString("nl-NL", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
-const name = (id) => (S.personas.find((p) => p.id === id)?.label.split(" (")[0]) || (id || "").split("/").pop().replace(/^./, (c) => c.toUpperCase());
+const name = (id) => (id === S.me && (S.claims.given_name || S.claims.name)) || (S.personas.find((p) => p.id === id)?.label.split(" (")[0]) || (id || "").split("/").pop().replace(/^./, (c) => c.toUpperCase());
 
 // ---------- weergave ----------
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -236,7 +249,17 @@ function page(k, m) {
     <h2>Berichten</h2>${list(m.gesprekken, (g) => row(g, subGesprek(g)), "Geen open gesprekken.")}`;
 }
 
+// De geschiedenis van een resource komt pas als je hem opent: één verzoek per resource.
 function timeline(ids) {
+  const todo = ids.filter((id) => !S.logged.has(id));
+  if (todo.length) {
+    todo.forEach((id) => S.logged.add(id));
+    S.history += todo.length;
+    Promise.all(todo.map((id) => api(`/subjects/${encodeURIComponent(id)}/events?limit=100`).then(({ events }) => {
+      const live = S.log.get(id) || [], known = new Set(events.map((e) => e.id));
+      S.log.set(id, [...events, ...live.filter((e) => !known.has(e.id))]);
+    }).catch(() => {}))).then(render);
+  }
   const events = ids.flatMap((id) => S.log.get(id) || []).sort((a, b) => +a.sequence - +b.sequence);
   return `<ul class="timeline">${events.map((e) => `<li><div class="when">${time(e.time)}</div>${esc(S.titles[e.type] || e.type.split(".").slice(-2).join(" "))} <span class="when">door ${esc(name(e.actor))}</span></li>`).join("")}</ul>`;
 }
@@ -294,8 +317,9 @@ function render() {
     document.getElementById("nav").innerHTML = nav(k.split("/")[0], m);
     S.flash.clear();
     const lines = document.getElementById("app").textContent.trim().split("\n").length;
-    const load = S.requests - S.acts, acts = S.acts ? ` Daarna ${S.acts} keer iets gedaan: elke handeling is één <code>POST /events</code>.` : " Iets doen is één <code>POST /events</code> met een handeling.";
-    document.getElementById("how").innerHTML = `Deze pagina kent geen API per soort. Laden kostte <b>${load}</b> verzoeken: de profielen, een ticket en <b>één stroom</b> (<code>GET /events</code>) met ${S.events} events, die daarna live blijft.${acts} Wat je mag zien en doen staat in het profiel en geldt in het register. De app is ${lines} regels JavaScript, zonder build. <a href="/ui">Techniek</a>`;
+    const acts = S.acts ? ` Daarna ${S.acts} keer iets gedaan: elke handeling is één <code>POST /events</code>.` : " Iets doen is één <code>POST /events</code> met een handeling.";
+    const hist = S.history ? ` Voor de geschiedenis van wat u opende: ${S.history} verzoek${S.history > 1 ? "en" : ""}.` : "";
+    document.getElementById("how").innerHTML = `Deze pagina kent geen API per soort. Laden kostte <b>${S.load}</b> verzoeken: wie u bent, de profielen, <b>één query</b> naar wat van u is (${S.loaded} resources), een ticket en <b>één stroom</b> (<code>GET /events</code>) vanaf dat punt, die live blijft (${S.events} events).${acts}${hist} Wat van u is, wat u mag zien en wat u mag doen staat in de profielen en geldt in het register. De app is ${lines} regels JavaScript, zonder build. <a href="/ui">Techniek</a>`;
   });
 }
 const setLive = (on) => { const l = document.getElementById("live"); l.textContent = on ? "live" : "verbinden…"; l.className = "pill" + (on ? " on" : ""); };
@@ -332,28 +356,97 @@ document.addEventListener("click", async (ev) => {
 });
 addEventListener("hashchange", render);
 
-// ---------- inloggen (demo: een dev-token per inwoner) ----------
-async function login(persona) {
-  S.me = persona.id;
-  S.token = "dev:" + persona.id + Object.entries(persona.claims || {}).map(([k, v]) => `|${k}=${v}`).join("");
-  S.res.clear(); S.log.clear(); S.requests = 0; S.acts = 0; S.events = 0;
-  try { localStorage.setItem("mijn-demodam-wie", persona.id); } catch {}
-  const { profiles } = await api("/profiles");
+// ---------- inloggen ----------
+// Echt: OpenID Connect met PKCE bij de IdP uit /ui/config (publieke client, geen geheim).
+// Demo: met dev-modus aan een persona uit de profielen ("bekijk als").
+const back = () => location.origin + location.pathname;
+const b64 = (a) => btoa(String.fromCharCode(...a)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const discover = (cfg) => fetch(cfg.issuer.replace(/\/$/, "") + "/.well-known/openid-configuration").then((r) => r.json());
+async function loginStart() {
+  const conf = await discover(S.cfg.login);
+  const verifier = b64(crypto.getRandomValues(new Uint8Array(32))), state = b64(crypto.getRandomValues(new Uint8Array(16)));
+  const challenge = b64(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
+  store("mijn-demodam-pkce", { verifier, state, hash: location.hash });
+  location.href = conf.authorization_endpoint + "?" + new URLSearchParams({ client_id: S.cfg.login.clientId, response_type: "code", scope: "openid",
+    redirect_uri: back(), code_challenge: challenge, code_challenge_method: "S256", state });
+}
+async function tokens(body) {
+  const conf = await discover(S.cfg.login);
+  const r = await fetch(conf.token_endpoint, { method: "POST", body: new URLSearchParams({ client_id: S.cfg.login.clientId, ...body }) });
+  if (!r.ok) throw new Error("Inloggen mislukt");
+  const t = await r.json();
+  const o = { access: t.access_token, refresh: t.refresh_token, exp: Date.now() + t.expires_in * 1000, logout: conf.end_session_endpoint, id: t.id_token };
+  store("mijn-demodam-oidc", o);
+  S.token = o.access;
+  return o;
+}
+// Een verlopen token stil vernieuwen voor een verzoek.
+async function fresh() {
+  const o = stored("mijn-demodam-oidc");
+  if (o && S.token === o.access && Date.now() > o.exp - 30000) await tokens({ grant_type: "refresh_token", refresh_token: o.refresh }).catch(() => logout());
+}
+function logout() {
+  const o = stored("mijn-demodam-oidc");
+  store("mijn-demodam-oidc");
+  location.href = o?.logout ? o.logout + "?" + new URLSearchParams({ client_id: S.cfg.login.clientId, post_logout_redirect_uri: back(), ...(o.id ? { id_token_hint: o.id } : {}) }) : back();
+}
+
+async function start(token) {
+  if (S.stream) S.stream.close();
+  S.token = token;
+  S.res.clear(); S.log.clear(); S.logged.clear(); S.requests = 0; S.acts = 0; S.history = 0; S.events = 0; S.loaded = 0;
+  const [me, { profiles }] = await Promise.all([api("/me"), api("/profiles")]);
+  S.me = me.id; S.claims = me.claims || {};
+  document.getElementById("me").textContent = stored("mijn-demodam-oidc") ? name(S.me) : "";
   for (const p of profiles) Object.assign(S.titles, p.titles || {});
-  await connect(0);
+  // Wat van mij is, over alle soorten. Daarna de stroom vanaf het punt van de query.
+  let cursor = null, feed = null;
+  do {
+    const page = await api("/query", { method: "POST", body: JSON.stringify({ mine: true, pageSize: 100, cursor }) });
+    page.results.forEach(put);
+    S.loaded += page.results.length;
+    feed ??= page.feedCursor;
+    cursor = page.next;
+  } while (cursor);
+  await connect(feed);
+  S.load = S.requests;
   render();
 }
+
 (async () => {
-  const cfg = await fetch("/ui/config").then((r) => r.json());
-  S.personas = cfg.personas || [];
+  S.cfg = await fetch("/ui/config").then((r) => r.json());
+  S.personas = S.cfg.personas || [];
+  const sel = document.getElementById("who"), inBtn = document.getElementById("login"), outBtn = document.getElementById("logout");
+  inBtn.onclick = (e) => { e.preventDefault(); loginStart(); };
+  outBtn.onclick = (e) => { e.preventDefault(); logout(); };
+  const q = new URLSearchParams(location.search), pkce = stored("mijn-demodam-pkce");
+  try {
+    if (q.get("code") && pkce && q.get("state") === pkce.state) {
+      store("mijn-demodam-pkce");
+      await tokens({ grant_type: "authorization_code", code: q.get("code"), redirect_uri: back(), code_verifier: pkce.verifier });
+      history.replaceState(null, "", back() + (pkce.hash || ""));
+    }
+    const o = stored("mijn-demodam-oidc");
+    if (o) { outBtn.hidden = false; return await start(o.access); }
+  } catch (e) { store("mijn-demodam-oidc"); }
+  inBtn.hidden = !S.cfg.login;
   const inwoners = S.personas.filter((p) => ["inwoner", "curator"].includes(p.claims?.rol));
-  const sel = document.getElementById("who");
+  if (!S.cfg.devAuth || !inwoners.length) {
+    document.getElementById("view").innerHTML = S.cfg.login ? `<h1>Mijn Demodam</h1><p>Log in om te zien wat u bij de gemeente heeft lopen.</p><p><button class="btn" onclick="loginStart()">Inloggen</button></p>` : `<p class="empty">Geen inlog ingesteld en geen dev-modus.</p>`;
+    return;
+  }
+  // Demo: bekijk als een inwoner uit de profielen.
+  sel.hidden = false;
   sel.innerHTML = inwoners.map((p) => `<option value="${esc(p.id)}">${esc(p.label)}</option>`).join("");
   let saved; try { saved = localStorage.getItem("mijn-demodam-wie"); } catch {}
-  sel.value = inwoners.some((p) => p.id === saved) ? saved : (inwoners.find((p) => p.id.endsWith("/jan")) || inwoners[0])?.id;
-  sel.onchange = () => login(inwoners.find((p) => p.id === sel.value));
-  if (sel.value) login(inwoners.find((p) => p.id === sel.value));
-  else document.getElementById("view").innerHTML = `<p class="empty">Geen inwoners gevonden. Draait OpenEvents in dev-modus met de voorbeeldprofielen?</p>`;
+  sel.value = inwoners.some((p) => p.id === saved) ? saved : (inwoners.find((p) => p.id.endsWith("/jan")) || inwoners[0]).id;
+  const as = () => {
+    const p = inwoners.find((x) => x.id === sel.value);
+    try { localStorage.setItem("mijn-demodam-wie", p.id); } catch {}
+    start("dev:" + p.id + Object.entries(p.claims || {}).map(([k, v]) => `|${k}=${v}`).join(""));
+  };
+  sel.onchange = as;
+  as();
 })();
 </script>
 </body>

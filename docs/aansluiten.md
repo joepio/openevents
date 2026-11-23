@@ -42,6 +42,8 @@ Nog niet: vertrouwelijkheidaanduiding in de leesregel (dat vraagt een vergelijki
 | `OPENEVENTS_OIDC_JWKS_URL` | JWKS-URL, als er geen discovery is |
 | `OPENEVENTS_OIDC_AUDIENCE` | verwachte `aud` (aanbevolen) |
 | `OPENEVENTS_ACTOR_CLAIM` | claim met de actor-id, standaard `sub`; bij client credentials vaak `azp` of `client_id` |
+| `OPENEVENTS_ACTOR_PREFIX` | komt voor de claim, zodat de actor-id gelijk is aan de ids in de data (`https://id.example.nl/` + `suzanne`) |
+| `OPENEVENTS_UI_CLIENT_ID` | publieke client bij de IdP voor inloggen in `/mijnoverheid` (authorization code met PKCE, geen geheim) |
 | `OPENEVENTS_NOTIFICATIES_AUTH` | exacte Authorization-header die Open Notificaties meestuurt; zonder deze variabele staat `/notificaties` uit |
 | `OPENEVENTS_ZGW_CLIENT_ID`, `OPENEVENTS_ZGW_SECRET` | om resources op te halen bij Open Zaak |
 | `OPENEVENTS_NOTIFICATIES_API` | Notificaties API (bijvoorbeeld `https://notificaties.example.nl/api/v1`): OpenEvents abonneert zich zelf |

@@ -134,6 +134,10 @@ Elke query-respons bevat een `feedCursor`: het volgnummer van het log, vastgeste
 
 Voor filters met paden is "dezelfde selectie volgen" lastiger: een gesprek kan in de selectie komen doordat de zaak van zaaktype verandert, of doordat jij lid wordt van een team. De engine houdt daarom per open stroom bij welke onderwerpen erin zitten, en stuurt `subject.matched` of `subject.unmatched` als dat verandert. Dat is hetzelfde mechanisme voor een gewijzigd filter als voor gewijzigde rechten.
 
+## Wat van mij is
+
+Met `"mine": true` geeft een query alleen wat over de aanroeper gaat, volgens de `mine`-regel van het type in het profiel. Zonder `type` gaat de query over alle types met een `mine`-regel; de cursor is dan `{type} {subject}`. Zo haalt een portaal in één verzoek alles op wat van de inwoner is en opent daarna de stroom vanaf de `feedCursor`. Op die stroom draagt een event `"mine": true` als het over de aanroeper gaat, zodat het portaal ook nieuwe zaken en taken herkent.
+
 ## HTTP-methode
 
 - `POST /query` met een JSON-body is de standaard. Persoonsgegevens staan dan niet in URL's en logs (eis A8).

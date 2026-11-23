@@ -87,7 +87,8 @@
               "momentEindeGesprek"
             ]
           }
-        ]
+        ],
+        "mine": "gespreksdeelnames.partij = actor()"
       }
     },
     "nl.vng.gesprekken.bijdrage": {
@@ -104,7 +105,8 @@
         "gesprek"
       ],
       "rules": {
-        "read": "(gesprek.gespreksdeelnames.partij = actor() OR gesprek.gespreksdeelnames.actor = actor()) OR gesprek.team = actor('team')"
+        "read": "(gesprek.gespreksdeelnames.partij = actor() OR gesprek.gespreksdeelnames.actor = actor()) OR gesprek.team = actor('team')",
+        "mine": "gesprek.gespreksdeelnames.partij = actor()"
       }
     }
   },

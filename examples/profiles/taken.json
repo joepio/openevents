@@ -105,7 +105,8 @@
               "aangemaakt"
             ]
           }
-        ]
+        ],
+        "mine": "voor.partij = actor()"
       }
     }
   },

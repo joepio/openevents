@@ -276,7 +276,8 @@
               "bekendmaking"
             ]
           }
-        ]
+        ],
+        "mine": "aanvrager.partij = actor() OR gemachtigde = actor()"
       }
     },
     "nl.vng.vergunningen.advies": {

@@ -56,6 +56,7 @@ fn all(reg: &Register, actor: &Actor, type_name: &str) -> Vec<Value> {
             fields: None,
             page_size: Some(100),
             cursor: cursor.take(),
+            mine: false,
         };
         let Ok(v) = reg.query(actor, &req) else { break };
         if let Some(list) = v["results"].as_array() {

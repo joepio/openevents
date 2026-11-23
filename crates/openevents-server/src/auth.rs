@@ -5,7 +5,8 @@
 //!   connect: OAuth2 client credentials at their or the municipality's IdP.
 //! - `Authorization: Bearer <JWT>`, HS256 with `OPENEVENTS_JWT_SECRET` (simple setups).
 //! - The actor id is the claim `OPENEVENTS_ACTOR_CLAIM` (default `sub`; for client
-//!   credentials often `azp` or `client_id`). All claims are available to `actor('claim')`
+//!   credentials often `azp` or `client_id`), after `OPENEVENTS_ACTOR_PREFIX` when set
+//!   (`https://id.example.nl/` + `suzanne`), so login ids match the ids in the data. All claims are available to `actor('claim')`
 //!   in rules, also nested ones such as `actor('realm_access.roles')`.
 //! - With `OPENEVENTS_DEV_AUTH=true` also `Bearer dev:<actor-id>|claim=value|...`, for
 //!   demos and tests only.
@@ -31,6 +32,8 @@ pub struct AuthConfig {
     pub oidc: Option<Arc<Oidc>>,
     /// Claim that holds the actor id. Empty means `sub`.
     pub actor_claim: String,
+    /// Put before the claim value to make the actor id.
+    pub actor_prefix: String,
 }
 
 /// Tokens from an OpenID Connect provider, checked against its JWKS.
@@ -151,6 +154,7 @@ impl AuthConfig {
         AuthConfig {
             oidc,
             actor_claim: env("OPENEVENTS_ACTOR_CLAIM").unwrap_or_default(),
+            actor_prefix: env("OPENEVENTS_ACTOR_PREFIX").unwrap_or_default(),
             jwt_secret: std::env::var("OPENEVENTS_JWT_SECRET")
                 .ok()
                 .filter(|s| !s.is_empty()),
@@ -174,7 +178,7 @@ impl AuthConfig {
         } else {
             &self.actor_claim
         };
-        let id = claims.get(claim)?.as_str()?.to_string();
+        let id = format!("{}{}", self.actor_prefix, claims.get(claim)?.as_str()?);
         Some(self.actor(id, claims))
     }
 

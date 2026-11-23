@@ -81,7 +81,8 @@
               "resultaat"
             ]
           }
-        ]
+        ],
+        "mine": "initiatorBsn = actor('bsn')"
       }
     },
     "nl.vng.zgw.status": {
@@ -108,7 +109,8 @@
       "rules": {
         "read": "zaak.zaaktype = actor('zaaktypen') OR actor('rol') IN ('systeem', 'kcc') OR zaak.initiatorBsn = actor('bsn')",
         "write": "actor('rol') = 'systeem'",
-        "create": "actor('rol') = 'systeem'"
+        "create": "actor('rol') = 'systeem'",
+        "mine": "zaak.initiatorBsn = actor('bsn')"
       },
       "references": [
         "zaak"
@@ -167,7 +169,8 @@
       "rules": {
         "read": "zaak.zaaktype = actor('zaaktypen') OR actor('rol') IN ('systeem', 'kcc') OR zaak.initiatorBsn = actor('bsn')",
         "write": "actor('rol') = 'systeem'",
-        "create": "actor('rol') = 'systeem'"
+        "create": "actor('rol') = 'systeem'",
+        "mine": "zaak.initiatorBsn = actor('bsn')"
       },
       "references": [
         "zaak"
@@ -196,7 +199,8 @@
       "rules": {
         "read": "zaak.zaaktype = actor('zaaktypen') OR actor('rol') IN ('systeem', 'kcc') OR zaak.initiatorBsn = actor('bsn')",
         "write": "actor('rol') = 'systeem'",
-        "create": "actor('rol') = 'systeem'"
+        "create": "actor('rol') = 'systeem'",
+        "mine": "zaak.initiatorBsn = actor('bsn')"
       },
       "references": [
         "zaak"

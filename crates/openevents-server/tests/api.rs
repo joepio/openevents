@@ -1340,3 +1340,97 @@ async fn mijnzaken_and_mijntaken_for_the_burger_from_the_token() {
     let (_, taken, _) = call(&app, "GET", "/mijn/taken/taken", Some(priya), None).await;
     assert_eq!(taken["count"], 0);
 }
+
+#[tokio::test]
+async fn mine_is_a_rule_in_the_profile() {
+    let app = app();
+    install(&app).await;
+    start_gesprek(&app).await;
+    call(
+        &app,
+        "POST",
+        "/events",
+        Some(SUZANNE),
+        Some(bijdrage("e2", B1, json!("Hallo"))),
+    )
+    .await;
+
+    // Over all types with a mine rule, without a type.
+    let (s, b, _) = call(
+        &app,
+        "POST",
+        "/query",
+        Some(SUZANNE),
+        Some(json!({ "mine": true })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let mut types: Vec<&str> = b["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["_meta"]["type"].as_str().unwrap())
+        .collect();
+    types.sort();
+    assert_eq!(
+        types,
+        ["nl.vng.gesprekken.bijdrage", "nl.vng.gesprekken.gesprek"]
+    );
+    assert_eq!(b["feedCursor"], "2");
+    // Paging with the cursor gives the same, one at a time.
+    let (_, p1, _) = call(
+        &app,
+        "POST",
+        "/query",
+        Some(SUZANNE),
+        Some(json!({ "mine": true, "pageSize": 1 })),
+    )
+    .await;
+    assert_eq!(p1["results"].as_array().unwrap().len(), 1);
+    let (_, p2, _) = call(
+        &app,
+        "POST",
+        "/query",
+        Some(SUZANNE),
+        Some(json!({ "mine": true, "pageSize": 1, "cursor": p1["next"] })),
+    )
+    .await;
+    assert_eq!(p2["results"].as_array().unwrap().len(), 1);
+    assert_ne!(
+        p1["results"][0]["_meta"]["subject"],
+        p2["results"][0]["_meta"]["subject"]
+    );
+
+    // Merve may read the gesprek (her team), but it is not hers.
+    let (_, b, _) = call(
+        &app,
+        "POST",
+        "/query",
+        Some(MERVE),
+        Some(json!({ "mine": true })),
+    )
+    .await;
+    assert_eq!(b["results"].as_array().unwrap().len(), 0);
+    let (_, b, _) = call(
+        &app,
+        "POST",
+        "/query",
+        Some(MERVE),
+        Some(json!({ "type": "nl.vng.gesprekken.gesprek" })),
+    )
+    .await;
+    assert_eq!(b["results"].as_array().unwrap().len(), 1);
+
+    // On the event listing, mine marks what is about the caller.
+    let (_, b, _) = call(&app, "GET", "/events?format=json", Some(SUZANNE), None).await;
+    assert_eq!(b["events"][0]["mine"], true);
+    let (_, b, _) = call(&app, "GET", "/events?format=json", Some(MERVE), None).await;
+    assert!(b["events"][0].get("mine").is_none());
+
+    // Without a type and without mine is an error.
+    let (s, _, _) = call(&app, "POST", "/query", Some(SUZANNE), Some(json!({}))).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+
+    let (_, me, _) = call(&app, "GET", "/me", Some(SUZANNE), None).await;
+    assert_eq!(me["id"], SUZANNE_ID);
+}

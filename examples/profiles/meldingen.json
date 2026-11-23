@@ -249,7 +249,8 @@
               "afgehandeld.tijd"
             ]
           }
-        ]
+        ],
+        "mine": "melder.partij = actor()"
       }
     },
     "nl.vng.meldingen.aanvulling": {
@@ -286,7 +287,8 @@
         }
       },
       "rules": {
-        "read": "melding.melder.partij = actor() OR melding.team = actor('team') OR actor('rol') IN ('kcc', 'systeem')"
+        "read": "melding.melder.partij = actor() OR melding.team = actor('team') OR actor('rol') IN ('kcc', 'systeem')",
+        "mine": "melding.melder.partij = actor()"
       },
       "references": [
         "melding"

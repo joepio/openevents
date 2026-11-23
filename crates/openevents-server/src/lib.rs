@@ -40,6 +40,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(index))
         .route("/health", get(|| async { "ok" }))
+        .route("/me", get(get_me))
         .route("/events", get(get_events).post(post_events))
         .route("/events/tickets", post(post_ticket))
         .route("/notificaties", post(post_notificatie))
@@ -413,6 +414,14 @@ fn event_stream(
     }
 }
 
+/// `GET /me`: who the token says you are, as the register sees it (actor id and claims).
+async fn get_me(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    match actor(&state, &headers).await {
+        Ok(a) => Json(json!({ "id": a.id, "admin": a.admin, "claims": a.claims })).into_response(),
+        Err(r) => r,
+    }
+}
+
 async fn get_subject(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -603,5 +612,18 @@ async fn ui_config(State(state): State<AppState>) -> Json<Value> {
             }
         }
     }
-    Json(json!({ "devAuth": state.auth.dev_auth, "personas": personas }))
+    // Login for browser apps such as /mijnoverheid: authorization code with PKCE at the
+    // OIDC provider, with a public client. Only the issuer and client id, no secrets.
+    let login = match (
+        std::env::var("OPENEVENTS_OIDC_ISSUER")
+            .ok()
+            .filter(|s| !s.is_empty()),
+        std::env::var("OPENEVENTS_UI_CLIENT_ID")
+            .ok()
+            .filter(|s| !s.is_empty()),
+    ) {
+        (Some(issuer), Some(client_id)) => json!({ "issuer": issuer, "clientId": client_id }),
+        _ => Value::Null,
+    };
+    Json(json!({ "devAuth": state.auth.dev_auth, "personas": personas, "login": login }))
 }

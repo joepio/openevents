@@ -23,6 +23,10 @@ pub struct Rules {
     pub read: Option<Expr>,
     pub create: Option<Expr>,
     pub write: Option<Expr>,
+    /// Which resources are about the actor ("mijn"): for an overview of their own
+    /// zaken, taken and gesprekken. Queries with `mine` and the `mine` attribute on
+    /// streamed events use it. Not a permission: reading still needs `read`.
+    pub mine: Option<Expr>,
 }
 
 /// Which fields an actor sees: the first rule whose `when` holds applies.
@@ -154,6 +158,7 @@ impl Profile {
                             read: rule(r, "read", &at)?,
                             create: rule(r, "create", &at)?,
                             write: rule(r, "write", &at)?,
+                            mine: rule(r, "mine", &at)?,
                         }
                     }
                 };

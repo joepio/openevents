@@ -144,8 +144,12 @@ pub struct EventFilter {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QueryRequest {
-    #[serde(rename = "type")]
+    /// The type to query. May be left out with `mine`: then all types with a `mine` rule.
+    #[serde(rename = "type", default)]
     pub type_name: String,
+    /// Only what is about the caller, by the `mine` rule of the type.
+    #[serde(default)]
+    pub mine: bool,
     #[serde(default)]
     pub filter: Option<Value>,
     #[serde(default)]
@@ -612,6 +616,7 @@ impl Register {
                 fields: None,
                 page_size: Some(MAX_PAGE),
                 cursor: None,
+                mine: false,
             };
             if let Ok(v) = self.query(actor, &req) {
                 if let Some(list) = v["results"].as_array() {
@@ -673,7 +678,7 @@ impl Register {
         let limit = limit.clamp(1, MAX_PAGE);
         let mut out = Vec::new();
         let mut cursor = after;
-        let mut cache: HashMap<String, Visibility> = HashMap::new();
+        let mut cache: HashMap<String, (Visibility, bool)> = HashMap::new();
         let end = prefix_end(b"log/");
         loop {
             let rows = self.kv.range(&k_log(cursor + 1), &end, 500)?;
@@ -718,10 +723,10 @@ impl Register {
         &self,
         event: &Value,
         actor: &Actor,
-        cache: &mut HashMap<String, Visibility>,
+        cache: &mut HashMap<String, (Visibility, bool)>,
     ) -> Result<Option<Value>, RegisterError> {
         let subject = event["subject"].as_str().unwrap_or("").to_string();
-        let vis = match cache.get(&subject) {
+        let (vis, mine) = match cache.get(&subject) {
             Some(v) => *v,
             None => {
                 let v = self.subject_visibility(&subject, actor)?;
@@ -729,30 +734,35 @@ impl Register {
                 v
             }
         };
-        Ok(match vis {
-            Visibility::Hidden => None,
-            Visibility::Full => Some(event.clone()),
+        let mut e = match vis {
+            Visibility::Hidden => return Ok(None),
+            Visibility::Full => event.clone(),
             Visibility::Limited => {
                 let mut e = event.clone();
                 if let Some(o) = e.as_object_mut() {
                     o.remove("data");
                     o.insert("dataHidden".into(), json!(true));
                 }
-                Some(e)
+                e
             }
-        })
+        };
+        // CloudEvents extension: the subject is about this actor (the `mine` rule).
+        if mine {
+            e["mine"] = json!(true);
+        }
+        Ok(Some(e))
     }
 
     fn subject_visibility(
         &self,
         subject: &str,
         actor: &Actor,
-    ) -> Result<Visibility, RegisterError> {
+    ) -> Result<(Visibility, bool), RegisterError> {
         let Some(r) = self.load_record(subject)? else {
             return Ok(if actor.admin {
-                Visibility::Full
+                (Visibility::Full, false)
             } else {
-                Visibility::Hidden
+                (Visibility::Hidden, false)
             });
         };
         let ps = self.profiles.read().unwrap();
@@ -761,21 +771,97 @@ impl Register {
                 let t = &p.types[name];
                 let refs = self.rule_refs(None);
                 if !readable_by(t, &r, actor, &refs) {
-                    Visibility::Hidden
-                } else if visible_fields(t, &r.state, actor, &refs).is_some() {
-                    Visibility::Limited
+                    (Visibility::Hidden, false)
                 } else {
-                    Visibility::Full
+                    let mine = !r.deleted && rule_allows(&t.rules.mine, &r.state, actor, &refs);
+                    if visible_fields(t, &r.state, actor, &refs).is_some() {
+                        (Visibility::Limited, mine)
+                    } else {
+                        (Visibility::Full, mine)
+                    }
                 }
             }
-            None if actor.admin => Visibility::Full,
-            None => Visibility::Hidden,
+            None if actor.admin => (Visibility::Full, false),
+            None => (Visibility::Hidden, false),
         })
     }
 
     /// `POST /query`: subjects of one type that match the filter AND the read rule.
     /// First version: scans the type index; no field indexes yet.
     pub fn query(&self, actor: &Actor, req: &QueryRequest) -> Result<Value, RegisterError> {
+        if req.type_name.is_empty() {
+            if !req.mine {
+                return invalid(
+                    "Missing type.",
+                    vec![ip(
+                        "/type",
+                        "required",
+                        "give a type, or mine: true for all types",
+                    )],
+                );
+            }
+            return self.query_mine(actor, req);
+        }
+        self.query_type(actor, req)
+    }
+
+    /// `POST /query` with `mine` and no type: what is about the caller, over all types
+    /// with a `mine` rule. The cursor is `{type} {subject}`.
+    fn query_mine(&self, actor: &Actor, req: &QueryRequest) -> Result<Value, RegisterError> {
+        let feed_cursor = self.head()?;
+        let mut types: Vec<String> = {
+            let ps = self.profiles.read().unwrap();
+            ps.by_id
+                .values()
+                .flat_map(|p| {
+                    p.types
+                        .iter()
+                        .filter(|(_, t)| t.rules.mine.is_some())
+                        .map(|(n, _)| n.clone())
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        };
+        types.sort();
+        let page = req.page_size.unwrap_or(20).clamp(1, MAX_PAGE);
+        let (from_type, mut cursor) = match req.cursor.as_deref().and_then(|c| c.split_once(' ')) {
+            Some((t, s)) => (t.to_string(), Some(s.to_string())),
+            None => (String::new(), None),
+        };
+        let mut results: Vec<Value> = Vec::new();
+        for t in types.into_iter().filter(|t| *t >= from_type) {
+            if t != from_type {
+                cursor = None;
+            }
+            let sub = QueryRequest {
+                type_name: t.clone(),
+                mine: true,
+                filter: req.filter.clone(),
+                fields: req.fields.clone(),
+                page_size: Some(page - results.len()),
+                cursor: cursor.take(),
+            };
+            let v = self.query_type(actor, &sub)?;
+            if let Some(list) = v["results"].as_array() {
+                results.extend(list.iter().cloned());
+            }
+            if let Some(next) = v["next"].as_str() {
+                return Ok(
+                    json!({ "results": results, "next": format!("{t} {next}"), "feedCursor": feed_cursor.to_string() }),
+                );
+            }
+            if results.len() == page {
+                // Full exactly at the end of a type: continue after its last subject.
+                let next = format!("{t} {}", subject_cursor(&results));
+                return Ok(
+                    json!({ "results": results, "next": next, "feedCursor": feed_cursor.to_string() }),
+                );
+            }
+        }
+        Ok(json!({ "results": results, "next": null, "feedCursor": feed_cursor.to_string() }))
+    }
+
+    fn query_type(&self, actor: &Actor, req: &QueryRequest) -> Result<Value, RegisterError> {
         let feed_cursor = self.head()?;
         let (profile, type_name) = {
             let ps = self.profiles.read().unwrap();
@@ -883,6 +969,9 @@ impl Register {
                     continue;
                 };
                 if record.deleted || !readable_by(t, &record, actor, &rules) {
+                    continue;
+                }
+                if req.mine && !rule_allows(&t.rules.mine, &record.state, actor, &rules) {
                     continue;
                 }
                 let allowed = visible_fields(t, &record.state, actor, &rules);

@@ -37,13 +37,15 @@ Optioneel `previousCommit`: de laatste commit die de client zag. Klopt die niet 
       "rules": {
         "read":   "gespreksdeelnames.partij = actor() OR gespreksdeelnames.actor = actor() OR team = actor('team') OR actor('rol') = 'kcc'",
         "write":  "team = actor('team')",
+        "mine":   "gespreksdeelnames.partij = actor()",
         "fields": [ { "when": "actor('rol') = 'kcc'", "show": ["gespreksonderwerp", "aanleidingZaak", "team", "momentEindeGesprek"] } ]
       }
     },
     "nl.vng.gesprekken.bijdrage": {
       "schema": { "$ref": "https://raw.githubusercontent.com/VNG-Realisatie/vng-api-lab/main/schemas/gesprekken/next.json#/$defs/Gespreksbijdrage" },
       "references": ["gesprek"],
-      "rules": { "read": "gesprek.gespreksdeelnames.partij = actor() OR gesprek.gespreksdeelnames.actor = actor() OR gesprek.team = actor('team')" }
+      "rules": { "read": "gesprek.gespreksdeelnames.partij = actor() OR gesprek.gespreksdeelnames.actor = actor() OR gesprek.team = actor('team')",
+                 "mine": "gesprek.gespreksdeelnames.partij = actor()" }
     }
   },
   "actions": {
@@ -67,6 +69,8 @@ Optioneel `previousCommit`: de laatste commit die de client zag. Klopt die niet 
   }
 }
 ```
+
+`mine` zegt wat over de aanroeper zelf gaat, voor een eigen overzicht ("mijn zaken, taken en gesprekken"). Het is geen recht: lezen gaat nog steeds via `read`. Een medewerker van het team mag het gesprek lezen, maar het is niet van hem. `POST /query` met `{"mine": true}` en zonder `type` geeft alles wat van de aanroeper is, over alle types met een `mine`-regel; op de eventstroom krijgt zo'n event het attribuut `"mine": true`. Een portaal hoeft dus zelf niet te weten in welk veld de burger staat.
 
 Het volledige voorbeeld staat in `examples/profiles/gesprekken.json`.
 

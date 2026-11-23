@@ -39,7 +39,8 @@
       },
       "rules": {
         "read": "eigenaar = actor() OR lezers = actor()",
-        "write": "eigenaar = actor()"
+        "write": "eigenaar = actor()",
+        "mine": "eigenaar = actor()"
       }
     }
   }
