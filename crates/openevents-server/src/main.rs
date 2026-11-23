@@ -80,6 +80,17 @@ async fn main() {
         if n.subscribe.is_some() {
             tokio::spawn(n.clone().keep_subscribed());
         }
+        if let Some(api) = n.import_zaken.clone() {
+            let (n, register) = (n.clone(), register.clone());
+            tokio::spawn(async move {
+                match openevents_server::notificaties::import_zaken(&n, &register, &api).await {
+                    Ok((seen, stored)) => {
+                        tracing::info!("import from {api}: {seen} zaken, {stored} events stored")
+                    }
+                    Err(e) => tracing::warn!("import from {api}: {e}"),
+                }
+            });
+        }
     }
     let state = AppState {
         register,

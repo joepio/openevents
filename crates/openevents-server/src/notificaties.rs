@@ -29,6 +29,10 @@
 //!   and `OPENEVENTS_PUBLIC_URL`: OpenEvents subscribes itself at Open Notificaties and
 //!   checks every few minutes that the abonnement is still there (it survives a reset of
 //!   Open Notificaties). So nothing has to be configured in Open Notificaties.
+//! - `OPENEVENTS_IMPORT_ZAKEN`: root of a Zaken API (`https://…/zaken/api/v1`). At startup
+//!   OpenEvents walks all zaken there, with their rollen, statussen, resultaat and
+//!   documenten, as if a notificatie had come for each. So zaken from before the
+//!   abonnement are mirrored too. Running it again changes nothing.
 
 use std::time::Duration;
 
@@ -43,6 +47,8 @@ pub struct NotificatiesConfig {
     pub zgw_secret: Option<String>,
     pub actor: String,
     pub client: reqwest::Client,
+    /// Zaken API root for the one-time import at startup.
+    pub import_zaken: Option<String>,
     /// Self-subscription: Notificaties API root, kanalen, and our callback URL.
     pub subscribe: Option<Subscribe>,
 }
@@ -67,6 +73,8 @@ impl NotificatiesConfig {
                 .timeout(Duration::from_secs(15))
                 .build()
                 .expect("http client"),
+            import_zaken: env("OPENEVENTS_IMPORT_ZAKEN")
+                .map(|u| u.trim_end_matches('/').to_string()),
             subscribe: match (
                 env("OPENEVENTS_NOTIFICATIES_API"),
                 env("OPENEVENTS_PUBLIC_URL"),
@@ -399,4 +407,114 @@ pub async fn handle(
         Ok(_) | Err(RegisterError::Conflict(_)) => Ok(Outcome::Stored),
         Err(e) => Err(format!("{e:?}")),
     }
+}
+
+/// All results of a ZGW list: paginated (`results`, `next`) or a plain array.
+async fn list_all(cfg: &NotificatiesConfig, url: &str) -> Result<Vec<Value>, String> {
+    let mut out = Vec::new();
+    let mut next = Some(url.to_string());
+    let mut pages = 0;
+    while let Some(u) = next.take() {
+        let page = cfg.fetch(&u).await?;
+        match page {
+            Value::Array(a) => out.extend(a),
+            p => {
+                out.extend(p["results"].as_array().cloned().unwrap_or_default());
+                next = p["next"].as_str().map(String::from);
+            }
+        }
+        pages += 1;
+        if pages >= 200 {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+/// The import at startup (`OPENEVENTS_IMPORT_ZAKEN`): every zaak and what belongs to it
+/// goes through `handle`, as a `create` notificatie. What is already mirrored is skipped.
+pub async fn import_zaken(
+    cfg: &NotificatiesConfig,
+    register: &Register,
+    api: &str,
+) -> Result<(usize, usize), String> {
+    let (mut stored, mut seen) = (0, 0);
+    let mut one = |r: Result<Outcome, String>, what: &str| match r {
+        Ok(Outcome::Stored) => stored += 1,
+        Ok(Outcome::Ignored(_)) => {}
+        Err(e) => tracing::warn!("import {what}: {e}"),
+    };
+    for zaak in list_all(cfg, &format!("{api}/zaken")).await? {
+        let Some(url) = zaak["url"].as_str().map(String::from) else {
+            continue;
+        };
+        seen += 1;
+        let n = |resource: &str, resource_url: &str, time: Option<&str>| Notificatie {
+            kanaal: "zaken".into(),
+            hoofd_object: url.clone(),
+            resource: resource.into(),
+            resource_url: resource_url.into(),
+            actie: "create".into(),
+            aanmaakdatum: time.map(String::from),
+            kenmerken: Value::Null,
+        };
+        one(handle(cfg, register, n("zaak", &url, None)).await, &url);
+        let q = format!("zaak={}", urlencoding(&url));
+        // Oldest status first, so the zaak ends with its current status.
+        let mut statussen = list_all(cfg, &format!("{api}/statussen?{q}"))
+            .await
+            .unwrap_or_default();
+        statussen.sort_by(|a, b| {
+            a["datumStatusGezet"]
+                .as_str()
+                .cmp(&b["datumStatusGezet"].as_str())
+        });
+        for (resource, list) in [
+            (
+                "rol",
+                list_all(cfg, &format!("{api}/rollen?{q}"))
+                    .await
+                    .unwrap_or_default(),
+            ),
+            ("status", statussen),
+            (
+                "resultaat",
+                list_all(cfg, &format!("{api}/resultaten?{q}"))
+                    .await
+                    .unwrap_or_default(),
+            ),
+            (
+                "zaakinformatieobject",
+                list_all(cfg, &format!("{api}/zaakinformatieobjecten?{q}"))
+                    .await
+                    .unwrap_or_default(),
+            ),
+        ] {
+            for r in list {
+                if let Some(u) = r["url"].as_str() {
+                    one(
+                        handle(
+                            cfg,
+                            register,
+                            n(resource, u, r["datumStatusGezet"].as_str()),
+                        )
+                        .await,
+                        u,
+                    );
+                }
+            }
+        }
+    }
+    Ok((seen, stored))
+}
+
+fn urlencoding(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
 }

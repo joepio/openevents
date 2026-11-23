@@ -27,49 +27,85 @@ async fn fake_open_zaak(
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let b = base.clone();
-    let app = Router::new().route(
-        "/zaken/api/v1/{resource}/{id}",
-        get(move |Path((resource, id)): Path<(String, String)>, headers: HeaderMap| {
-            let b = b.clone();
-            let fetches = fetches.clone();
-            let afgesloten = afgesloten.clone();
-            async move {
-                // ZGW auth: a JWT signed with the shared secret.
-                let auth = headers.get("authorization").and_then(|h| h.to_str().ok()).unwrap_or("");
-                if !auth.starts_with("Bearer ey") {
-                    return (StatusCode::FORBIDDEN, Json(json!({}))).into_response();
+    let bl = base.clone();
+    let app = Router::new()
+        .route(
+            "/zaken/api/v1/{resource}",
+            get(move |Path(resource): Path<String>| {
+                let b = bl.clone();
+                async move {
+                    // Lists for the import: paginated (zaken, statussen, rollen) or a plain array.
+                    let one = |r: &str, id: &str| resource_body(&b, r, id, false).unwrap();
+                    Json(match resource.as_str() {
+                        "zaken" => {
+                            json!({ "count": 1, "next": null, "results": [one("zaken", "z1")] })
+                        }
+                        "statussen" => {
+                            json!({ "count": 1, "next": null, "results": [one("statussen", "s1")] })
+                        }
+                        "rollen" => {
+                            json!({ "count": 1, "next": null, "results": [one("rollen", "r1")] })
+                        }
+                        "resultaten" => json!({ "count": 0, "next": null, "results": [] }),
+                        _ => json!([]),
+                    })
                 }
-                fetches.fetch_add(1, Ordering::SeqCst);
-                let url = format!("{b}/zaken/api/v1/{resource}/{id}");
-                let zaak = format!("{b}/zaken/api/v1/zaken/z1");
-                let body = match resource.as_str() {
-                    "zaken" => json!({
-                        "url": url, "identificatie": "ZAAK-2026-0001", "bronorganisatie": "123456782",
-                        "omschrijving": "Bezwaar tegen WOZ-beschikking", "zaaktype": BEZWAAR,
-                        "startdatum": "2026-11-10", "vertrouwelijkheidaanduiding": "vertrouwelijk",
-                        "status": format!("{b}/zaken/api/v1/statussen/s1"),
-                        "einddatum": if afgesloten.load(Ordering::SeqCst) { json!("2026-11-12") } else { Value::Null }
-                    }),
-                    "statussen" => json!({
-                        "url": url, "zaak": zaak, "statustype": format!("{b}/catalogi/api/v1/statustypen/in-behandeling"),
-                        "datumStatusGezet": "2026-11-10T10:00:00Z", "statustoelichting": "In behandeling genomen"
-                    }),
-                    "rollen" => json!({
-                        "url": url, "zaak": zaak, "omschrijvingGeneriek": "initiator", "betrokkeneType": "natuurlijk_persoon",
-                        "roltype": format!("{b}/catalogi/api/v1/roltypen/initiator"), "betrokkene": "",
-                        "betrokkeneIdentificatie": { "inpBsn": "999993653" }
-                    }),
-                    _ => return (StatusCode::NOT_FOUND, Json(json!({}))).into_response(),
-                };
-                (StatusCode::OK, Json(body)).into_response()
-            }
-        }),
-    );
+            }),
+        )
+        .route(
+            "/zaken/api/v1/{resource}/{id}",
+            get(
+                move |Path((resource, id)): Path<(String, String)>, headers: HeaderMap| {
+                    let b = b.clone();
+                    let fetches = fetches.clone();
+                    let afgesloten = afgesloten.clone();
+                    async move {
+                        // ZGW auth: a JWT signed with the shared secret.
+                        let auth = headers
+                            .get("authorization")
+                            .and_then(|h| h.to_str().ok())
+                            .unwrap_or("");
+                        if !auth.starts_with("Bearer ey") {
+                            return (StatusCode::FORBIDDEN, Json(json!({}))).into_response();
+                        }
+                        fetches.fetch_add(1, Ordering::SeqCst);
+                        match resource_body(&b, &resource, &id, afgesloten.load(Ordering::SeqCst)) {
+                            Some(body) => (StatusCode::OK, Json(body)).into_response(),
+                            None => (StatusCode::NOT_FOUND, Json(json!({}))).into_response(),
+                        }
+                    }
+                },
+            ),
+        );
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     base
 }
 
 use axum::response::IntoResponse;
+
+fn resource_body(b: &str, resource: &str, id: &str, afgesloten: bool) -> Option<Value> {
+    let url = format!("{b}/zaken/api/v1/{resource}/{id}");
+    let zaak = format!("{b}/zaken/api/v1/zaken/z1");
+    Some(match resource {
+        "zaken" => json!({
+            "url": url, "identificatie": "ZAAK-2026-0001", "bronorganisatie": "123456782",
+            "omschrijving": "Bezwaar tegen WOZ-beschikking", "zaaktype": BEZWAAR,
+            "startdatum": "2026-11-10", "vertrouwelijkheidaanduiding": "vertrouwelijk",
+            "status": format!("{b}/zaken/api/v1/statussen/s1"),
+            "einddatum": if afgesloten { json!("2026-11-12") } else { Value::Null }
+        }),
+        "statussen" => json!({
+            "url": url, "zaak": zaak, "statustype": format!("{b}/catalogi/api/v1/statustypen/in-behandeling"),
+            "datumStatusGezet": "2026-11-10T10:00:00Z", "statustoelichting": "In behandeling genomen"
+        }),
+        "rollen" => json!({
+            "url": url, "zaak": zaak, "omschrijvingGeneriek": "initiator", "betrokkeneType": "natuurlijk_persoon",
+            "roltype": format!("{b}/catalogi/api/v1/roltypen/initiator"), "betrokkene": "",
+            "betrokkeneIdentificatie": { "inpBsn": "999993653" }
+        }),
+        _ => return None,
+    })
+}
 
 fn app(register: Arc<Register>) -> Router {
     router(AppState {
@@ -89,6 +125,7 @@ fn app(register: Arc<Register>) -> Router {
             zgw_secret: Some("zgw-secret".into()),
             actor: "urn:openevents:notificaties".into(),
             client: reqwest::Client::new(),
+            import_zaken: None,
             subscribe: None,
         })),
     })
@@ -356,6 +393,7 @@ async fn subscribes_itself_at_open_notificaties() {
         zgw_secret: Some("zgw-secret".into()),
         actor: "urn:openevents:notificaties".into(),
         client: reqwest::Client::new(),
+        import_zaken: None,
         subscribe: Some(openevents_server::notificaties::Subscribe {
             api: format!("{base}/api/v1"),
             kanalen: vec!["zaken".into()],
@@ -372,4 +410,60 @@ async fn subscribes_itself_at_open_notificaties() {
     }
     store.lock().unwrap().clear(); // Open Notificaties was reset
     assert_eq!(cfg.ensure_subscribed().await, Ok(true));
+}
+
+#[tokio::test]
+async fn import_mirrors_zaken_from_before_the_abonnement() {
+    let fetches = Arc::new(AtomicUsize::new(0));
+    let base = fake_open_zaak(fetches, Arc::new(std::sync::atomic::AtomicBool::new(false))).await;
+    let register = Arc::new(Register::open(Arc::new(MemoryStore::new())).unwrap());
+    let app = app(register.clone());
+    let profile: Value =
+        serde_json::from_str(include_str!("../../../examples/profiles/zgw-zaken.json")).unwrap();
+    let (s, b) = call(
+        &app,
+        "PUT",
+        "/profiles/nl.vng.zgw.zaken",
+        "Bearer dev:urn:admin",
+        Some(profile),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let cfg = NotificatiesConfig {
+        auth: AUTH.into(),
+        zgw_client_id: Some("openevents".into()),
+        zgw_secret: Some("zgw-secret".into()),
+        actor: "urn:openevents:notificaties".into(),
+        client: reqwest::Client::new(),
+        import_zaken: None,
+        subscribe: None,
+    };
+    let api = format!("{base}/zaken/api/v1");
+    let (seen, stored) = openevents_server::notificaties::import_zaken(&cfg, &register, &api)
+        .await
+        .unwrap();
+    assert_eq!(seen, 1);
+    assert_eq!(stored, 3, "the zaak, its rol and its status");
+    // The initiator's BSN is on the zaak, so it is hers.
+    let suzanne = "Bearer dev:https://id.example.nl/suzanne|rol=inwoner|bsn=999993653";
+    let (_, b) = call(
+        &app,
+        "POST",
+        "/query",
+        suzanne,
+        Some(json!({ "mine": true })),
+    )
+    .await;
+    let types: Vec<&str> = b["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["_meta"]["type"].as_str().unwrap())
+        .collect();
+    assert!(types.contains(&"nl.vng.zgw.zaak"), "{b}");
+    // Again: nothing new.
+    let (_, again) = openevents_server::notificaties::import_zaken(&cfg, &register, &api)
+        .await
+        .unwrap();
+    assert_eq!(again, 0);
 }

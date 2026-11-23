@@ -48,5 +48,6 @@ Nog niet: vertrouwelijkheidaanduiding in de leesregel (dat vraagt een vergelijki
 | `OPENEVENTS_ZGW_CLIENT_ID`, `OPENEVENTS_ZGW_SECRET` | om resources op te halen bij Open Zaak |
 | `OPENEVENTS_NOTIFICATIES_API` | Notificaties API (bijvoorbeeld `https://notificaties.example.nl/api/v1`): OpenEvents abonneert zich zelf |
 | `OPENEVENTS_NOTIFICATIES_KANALEN` | kanalen voor het abonnement, komma's, standaard `zaken` |
+| `OPENEVENTS_IMPORT_ZAKEN` | Zaken API (`https://…/zaken/api/v1`): bij het opstarten haalt OpenEvents alle zaken op, met rollen, statussen, resultaat en documenten, alsof er voor elk een notificatie kwam. Zo staan ook zaken van vóór het abonnement in de spiegel. Opnieuw draaien verandert niets. |
 | `OPENEVENTS_PUBLIC_URL` | publieke basis-URL van OpenEvents, voor de callback |
 | `OPENEVENTS_NOTIFICATIES_ACTOR` | actor-id van de adapter, standaard `urn:openevents:notificaties` (claim `rol=systeem`) |
