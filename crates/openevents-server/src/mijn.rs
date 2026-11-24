@@ -8,8 +8,9 @@
 //!
 //! A zaak is a vergunningaanvraag, a melding or a ZGW zaak (from the Notificaties
 //! adapter). The register's read rules apply first; on top of that MijnZaken shows only
-//! what the burger is betrokkene in (aanvrager, gemachtigde, melder, initiator), since a
-//! read rule may let an inwoner see more (a public melding, a bekendgemaakte aanvraag).
+//! what the `mine` rule of the profile says is the burger's (aanvrager, gemachtigde,
+//! melder, initiator), since a read rule may let an inwoner see more (a public melding,
+//! a bekendgemaakte aanvraag).
 //! See docs/mijnoverheid.md.
 
 use std::collections::HashMap;
@@ -46,7 +47,12 @@ pub struct ListParams {
 // ---------- reading ----------
 
 /// Every resource of a type this actor may read. Unknown types give nothing.
-fn all(reg: &Register, actor: &Actor, type_name: &str) -> Vec<Value> {
+/// What the `mine` rule of the type says is the burger's.
+fn mine(reg: &Register, actor: &Actor, type_name: &str) -> Vec<Value> {
+    query_all(reg, actor, type_name, true)
+}
+
+fn query_all(reg: &Register, actor: &Actor, type_name: &str, mine: bool) -> Vec<Value> {
     let mut out = Vec::new();
     let mut cursor = None;
     for _ in 0..MAX_SCAN_PAGES {
@@ -56,7 +62,7 @@ fn all(reg: &Register, actor: &Actor, type_name: &str) -> Vec<Value> {
             fields: None,
             page_size: Some(100),
             cursor: cursor.take(),
-            mine: false,
+            mine,
         };
         let Ok(v) = reg.query(actor, &req) else { break };
         if let Some(list) = v["results"].as_array() {
@@ -102,22 +108,6 @@ fn capitalize(s: &str) -> String {
 }
 
 // ---------- zaken ----------
-
-/// Is the burger betrokkene? Read rules decide what may be read; this decides what
-/// belongs in *my* zaken.
-fn betrokken(type_name: &str, v: &Value, actor: &Actor) -> bool {
-    let me = actor.id.as_str();
-    match type_name {
-        AANVRAAG => v["aanvrager"]["partij"] == me || v["gemachtigde"] == me,
-        MELDING => v["melder"]["partij"] == me,
-        ZGW_ZAAK => match (&v["initiatorBsn"], &actor.claims["bsn"]) {
-            (Value::String(a), Value::String(b)) => a == b,
-            _ => false,
-        },
-        TAAK => v["voor"]["partij"] == me,
-        _ => false,
-    }
-}
 
 struct Zaak {
     type_name: &'static str,
@@ -221,10 +211,7 @@ fn zaak_datum(type_name: &str, v: &Value) -> String {
 fn mijn_zaken(reg: &Register, actor: &Actor) -> Vec<Zaak> {
     let mut out = Vec::new();
     for type_name in [AANVRAAG, MELDING, ZGW_ZAAK] {
-        for v in all(reg, actor, type_name) {
-            if !betrokken(type_name, &v, actor) {
-                continue;
-            }
+        for v in mine(reg, actor, type_name) {
             let nummer = zaaknummer(type_name, &v);
             let (gesloten, huidig) = zaak_status(reg, actor, type_name, &v);
             let summary = json!({
@@ -424,9 +411,8 @@ fn contactmomenten(reg: &Register, actor: &Actor, z: &Zaak) -> Vec<Value> {
 
 fn mijn_taken(reg: &Register, actor: &Actor) -> Vec<Value> {
     let mut zaken: HashMap<String, Option<Value>> = HashMap::new();
-    let mut out: Vec<Value> = all(reg, actor, TAAK)
+    let mut out: Vec<Value> = mine(reg, actor, TAAK)
         .into_iter()
-        .filter(|t| betrokken(TAAK, t, actor))
         .map(|t| {
             let sub = subject(&t).to_string();
             let mut taak = json!({

@@ -985,6 +985,7 @@ dependencies = [
  "jsonwebtoken",
  "openevents-core",
  "reqwest",
+ "ring",
  "serde",
  "serde_json",
  "tempfile",

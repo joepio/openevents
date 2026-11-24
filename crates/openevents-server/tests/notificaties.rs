@@ -132,6 +132,7 @@ fn app(register: Arc<Register>) -> Router {
             actor: "urn:openevents:notificaties".into(),
             client: reqwest::Client::new(),
             import_zaken: None,
+            pseudonym: None,
             subscribe: None,
         })),
     })
@@ -406,6 +407,7 @@ async fn subscribes_itself_at_open_notificaties() {
         actor: "urn:openevents:notificaties".into(),
         client: reqwest::Client::new(),
         import_zaken: None,
+        pseudonym: None,
         subscribe: Some(openevents_server::notificaties::Subscribe {
             api: format!("{base}/api/v1"),
             kanalen: vec!["zaken".into()],
@@ -448,6 +450,7 @@ async fn import_mirrors_zaken_from_before_the_abonnement() {
         actor: "urn:openevents:notificaties".into(),
         client: reqwest::Client::new(),
         import_zaken: None,
+        pseudonym: None,
         subscribe: None,
     };
     let api = format!("{base}/zaken/api/v1");
@@ -503,4 +506,82 @@ async fn import_mirrors_zaken_from_before_the_abonnement() {
         .await
         .unwrap();
     assert_eq!(again, 0);
+}
+
+#[tokio::test]
+async fn bsn_is_stored_as_a_pseudonym() {
+    use openevents_server::pseudonym::Pseudonym;
+    let base = fake_open_zaak(
+        Arc::new(AtomicUsize::new(0)),
+        Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    )
+    .await;
+    let register = Arc::new(Register::open(Arc::new(MemoryStore::new())).unwrap());
+    let p = || Some(Arc::new(Pseudonym::new("sleutel", vec!["bsn".into()])));
+    let cfg = NotificatiesConfig {
+        auth: AUTH.into(),
+        zgw_client_id: Some("openevents".into()),
+        zgw_secret: Some("zgw-secret".into()),
+        actor: "urn:openevents:notificaties".into(),
+        client: reqwest::Client::new(),
+        import_zaken: None,
+        pseudonym: p(),
+        subscribe: None,
+    };
+    let app = router(AppState {
+        register: register.clone(),
+        auth: AuthConfig {
+            dev_auth: true,
+            admins: vec!["urn:admin".into()],
+            pseudonym: p(),
+            ..Default::default()
+        },
+        tickets: Arc::new(Tickets::default()),
+        schemas: Arc::new(openevents_server::schemas::Schemas::new(None)),
+        notificaties: None,
+    });
+    let profile: Value =
+        serde_json::from_str(include_str!("../../../examples/profiles/zgw-zaken.json")).unwrap();
+    let (s, b) = call(
+        &app,
+        "PUT",
+        "/profiles/nl.vng.zgw.zaken",
+        "Bearer dev:urn:admin",
+        Some(profile),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    openevents_server::notificaties::import_zaken(&cfg, &register, &format!("{base}/zaken/api/v1"))
+        .await
+        .unwrap();
+    // Nothing in the log or the state holds the BSN.
+    let (_, all) = call(
+        &app,
+        "GET",
+        "/events?format=json",
+        "Bearer dev:urn:admin",
+        None,
+    )
+    .await;
+    assert!(!all.to_string().contains("999993653"), "{all}");
+    // But Suzanne, with her BSN in the token, still finds her zaak.
+    let suzanne = "Bearer dev:https://id.example.nl/suzanne|rol=inwoner|bsn=999993653";
+    let (_, b) = call(
+        &app,
+        "POST",
+        "/query",
+        suzanne,
+        Some(json!({ "mine": true })),
+    )
+    .await;
+    assert!(
+        b["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["_meta"]["type"] == "nl.vng.zgw.zaak"),
+        "{b}"
+    );
+    let (_, z) = call(&app, "GET", "/mijn/zaken/zaken", suzanne, None).await;
+    assert_eq!(z["count"], 1, "{z}");
 }

@@ -52,6 +52,76 @@ pub struct SubjectType {
     /// the `mine` rule uses. A query that asks for one of their values reads the index
     /// instead of every resource of the type.
     pub indexed: Vec<String>,
+    /// How long a resource is kept: `keep` after the moment in field `from`. After that
+    /// the register purges it, with what refers to it (see `Register::purge`).
+    pub retention: Option<Retention>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Retention {
+    pub from: String,
+    pub months: u32,
+    pub days: i64,
+    pub seconds: i64,
+}
+
+impl Retention {
+    /// `P1Y`, `P6M`, `P30D`, `P2W`, `PT12H`, `P1Y6M`: years, months, weeks, days,
+    /// hours, minutes, seconds.
+    pub fn parse(from: &str, keep: &str) -> Option<Retention> {
+        let rest = keep.strip_prefix('P')?;
+        let (date, time) = rest.split_once('T').unwrap_or((rest, ""));
+        let (mut months, mut days, mut seconds) = (0u32, 0i64, 0i64);
+        let mut num = String::new();
+        for c in date.chars() {
+            if c.is_ascii_digit() {
+                num.push(c);
+                continue;
+            }
+            let n: i64 = num.parse().ok()?;
+            num.clear();
+            match c {
+                'Y' => months += (n * 12) as u32,
+                'M' => months += n as u32,
+                'W' => days += n * 7,
+                'D' => days += n,
+                _ => return None,
+            }
+        }
+        for c in time.chars() {
+            if c.is_ascii_digit() {
+                num.push(c);
+                continue;
+            }
+            let n: i64 = num.parse().ok()?;
+            num.clear();
+            match c {
+                'H' => seconds += n * 3600,
+                'M' => seconds += n * 60,
+                'S' => seconds += n,
+                _ => return None,
+            }
+        }
+        if !num.is_empty() || (months == 0 && days == 0 && seconds == 0) {
+            return None;
+        }
+        Some(Retention { from: from.to_string(), months, days, seconds })
+    }
+
+    /// When a resource with this state expires, if its `from` field holds a moment.
+    pub fn expires(&self, state: &Value) -> Option<chrono::DateTime<chrono::Utc>> {
+        let v = state.pointer(&format!("/{}", self.from.replace('.', "/")))?.as_str()?;
+        let start = chrono::DateTime::parse_from_rfc3339(v)
+            .map(|d| d.with_timezone(&chrono::Utc))
+            .ok()
+            .or_else(|| {
+                chrono::NaiveDate::parse_from_str(v, "%Y-%m-%d")
+                    .ok()
+                    .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc())
+            })?;
+        start.checked_add_months(chrono::Months::new(self.months))?
+            .checked_add_signed(chrono::Duration::days(self.days) + chrono::Duration::seconds(self.seconds))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -229,9 +299,26 @@ impl Profile {
                 });
                 indexed.sort();
                 indexed.dedup();
+                let retention = match def.get("retention") {
+                    None => None,
+                    Some(r) => {
+                        let from = r.get("from").and_then(|v| v.as_str());
+                        let keep = r.get("keep").and_then(|v| v.as_str());
+                        Some(
+                            from.zip(keep)
+                                .and_then(|(f, k)| Retention::parse(f, k))
+                                .ok_or_else(|| {
+                                    ProfileError(format!(
+                                        "{at}.retention: needs from (a field) and keep (an ISO 8601 duration such as P1Y)"
+                                    ))
+                                })?,
+                        )
+                    }
+                };
                 types.insert(
                     name.clone(),
                     SubjectType {
+                        retention,
                         indexed,
                         name: name.clone(),
                         fields,
@@ -419,6 +506,20 @@ pub fn merge_patch(target: &mut Value, patch: &Value) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn retention_durations() {
+        let r = Retention::parse("eind", "P1Y6M").unwrap();
+        assert_eq!(r.months, 18);
+        let r = Retention::parse("eind", "P2WT12H").unwrap();
+        assert_eq!((r.days, r.seconds), (14, 43200));
+        assert!(Retention::parse("eind", "1Y").is_none());
+        assert!(Retention::parse("eind", "P").is_none());
+        let r = Retention::parse("eind", "P30D").unwrap();
+        let e = r.expires(&serde_json::json!({ "eind": "2026-01-01T10:00:00Z" })).unwrap();
+        assert_eq!(e.to_rfc3339(), "2026-01-31T10:00:00+00:00");
+        assert!(r.expires(&serde_json::json!({ "eind": null })).is_none());
+    }
 
     #[test]
     fn merge_patch_rfc7396() {

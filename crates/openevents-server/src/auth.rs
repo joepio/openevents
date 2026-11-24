@@ -34,6 +34,8 @@ pub struct AuthConfig {
     pub actor_claim: String,
     /// Put before the claim value to make the actor id.
     pub actor_prefix: String,
+    /// Identifying claims (the BSN) become pseudonyms before any rule sees them.
+    pub pseudonym: Option<Arc<crate::pseudonym::Pseudonym>>,
 }
 
 /// Tokens from an OpenID Connect provider, checked against its JWKS.
@@ -155,6 +157,7 @@ impl AuthConfig {
             oidc,
             actor_claim: env("OPENEVENTS_ACTOR_CLAIM").unwrap_or_default(),
             actor_prefix: env("OPENEVENTS_ACTOR_PREFIX").unwrap_or_default(),
+            pseudonym: crate::pseudonym::Pseudonym::from_env().map(Arc::new),
             jwt_secret: std::env::var("OPENEVENTS_JWT_SECRET")
                 .ok()
                 .filter(|s| !s.is_empty()),
@@ -182,7 +185,10 @@ impl AuthConfig {
         Some(self.actor(id, claims))
     }
 
-    fn actor(&self, id: String, claims: Value) -> Actor {
+    fn actor(&self, id: String, mut claims: Value) -> Actor {
+        if let Some(p) = &self.pseudonym {
+            p.claims(&mut claims);
+        }
         let admin = self.admins.contains(&id);
         Actor { id, claims, admin }
     }

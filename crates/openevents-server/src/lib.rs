@@ -4,6 +4,7 @@ pub mod auth;
 pub mod mijn;
 pub mod notificaties;
 pub mod openapi;
+pub mod pseudonym;
 pub mod schemas;
 
 use std::collections::HashMap;

@@ -49,6 +49,8 @@ pub struct NotificatiesConfig {
     pub client: reqwest::Client,
     /// Zaken API root for the one-time import at startup.
     pub import_zaken: Option<String>,
+    /// BSN's in fetched resources become pseudonyms (see `pseudonym`).
+    pub pseudonym: Option<std::sync::Arc<crate::pseudonym::Pseudonym>>,
     /// Self-subscription: Notificaties API root, kanalen, and our callback URL.
     pub subscribe: Option<Subscribe>,
 }
@@ -73,6 +75,7 @@ impl NotificatiesConfig {
                 .timeout(Duration::from_secs(15))
                 .build()
                 .expect("http client"),
+            pseudonym: crate::pseudonym::Pseudonym::from_env().map(std::sync::Arc::new),
             import_zaken: env("OPENEVENTS_IMPORT_ZAKEN")
                 .map(|u| u.trim_end_matches('/').to_string()),
             subscribe: match (
@@ -207,6 +210,14 @@ impl NotificatiesConfig {
     }
 
     async fn fetch(&self, url: &str) -> Result<Value, String> {
+        let mut v = self.fetch_raw(url).await?;
+        if let Some(p) = &self.pseudonym {
+            p.resource(&mut v);
+        }
+        Ok(v)
+    }
+
+    async fn fetch_raw(&self, url: &str) -> Result<Value, String> {
         let mut req = self.client.get(url).header("Accept-Crs", "EPSG:4326");
         if let Some(t) = self.zgw_token() {
             req = req.bearer_auth(t);
