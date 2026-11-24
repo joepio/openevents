@@ -144,6 +144,20 @@ Met `"mine": true` geeft een query alleen wat over de aanroeper gaat, volgens de
 - Zodra clients de HTTP-methode [`QUERY`](https://httpwg.org/http-extensions/draft-ietf-httpbis-safe-method-w-body.html) ondersteunen, accepteert hetzelfde pad dezelfde body met `QUERY`. Die is veilig en idempotent, en dus cachebaar.
 - `GET` alleen voor views met niet-gevoelige parameters.
 
+## Indexen
+
+Elk type heeft een index op zijn `queryable` velden, zijn `references` en de eigen velden die de `mine`-regel gebruikt. Een pad door een verwijzing (`gesprek.team`) kan niet op dit type geïndexeerd worden. Een lijst geeft een indexregel per waarde, zodat `gespreksdeelnames.partij = actor()` ook via de index gaat.
+
+De query gebruikt de index als het filter, samen met de `mine`-regel, een `=` of `IN` op zo'n veld bevat, ook binnen `AND` (doorsnede) en `OR` (vereniging, als elke tak een index heeft). Anders leest de query alle resources van het type. De index levert kandidaten; filter en leesregels worden daarna nog steeds per resource gecontroleerd. De index wordt in dezelfde batch bijgewerkt als de stand, en opnieuw opgebouwd als een profiel andere velden indexeert.
+
+Gemeten met 100.000 taken (`crates/openevents-core/tests/index_bench.rs`, release, redb):
+
+| Query | Tijd |
+|---|---|
+| `mine` voor één inwoner (50 taken) | 1,2 ms |
+| filter `voor.partij = …` | 0,4 ms |
+| een filter zonder index (scan) | 640 ms |
+
 ## Grenzen en kosten
 
 Elke query krijgt vóór uitvoering een kostenschatting op basis van de indexen. De leesregel telt mee. Vaste grenzen in de eerste versie:

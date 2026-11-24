@@ -6,7 +6,7 @@
 //! (ADR-0008); the state of a resource is its commits applied in order.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
@@ -182,6 +182,43 @@ fn k_type_index(type_name: &str, subject: &str) -> Vec<u8> {
 }
 fn k_type_prefix(type_name: &str) -> Vec<u8> {
     format!("type/{type_name}\n").into_bytes()
+}
+fn k_idx_value(type_name: &str, field: &str, value: &str) -> Vec<u8> {
+    format!("idx/{type_name}\n{field}\n{value}\n").into_bytes()
+}
+fn k_idx_type(type_name: &str) -> Vec<u8> {
+    format!("idx/{type_name}\n").into_bytes()
+}
+fn k_idx_def(type_name: &str) -> Vec<u8> {
+    format!("idxdef/{type_name}").into_bytes()
+}
+/// How a value is written in an index key: strings as JSON (quoted, escaped), numbers as
+/// f64 so `1` and `1.0` meet, booleans as is. Objects, lists and null are not indexed.
+fn idx_val(v: &Value) -> Option<String> {
+    match v {
+        Value::String(_) => Some(v.to_string()),
+        Value::Number(n) => n.as_f64().map(|f| f.to_string()),
+        Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    }
+}
+/// The index entries of a resource: one per indexed field and value (lists give one
+/// entry per item).
+fn index_keys(t: &SubjectType, r: &SubjectRecord) -> BTreeSet<Vec<u8>> {
+    let mut out = BTreeSet::new();
+    if r.deleted {
+        return out;
+    }
+    for f in &t.indexed {
+        for v in cql2::lookup(&r.state, f) {
+            if let Some(s) = idx_val(v) {
+                let mut k = k_idx_value(&r.type_name, f, &s);
+                k.extend_from_slice(r.subject.as_bytes());
+                out.insert(k);
+            }
+        }
+    }
+    out
 }
 fn k_idem(source: &str, id: &str) -> Vec<u8> {
     format!("idem/{source}\n{id}").into_bytes()
@@ -384,7 +421,134 @@ impl Register {
                 ),
             }
         }
+        reg.ensure_indexes()?;
         Ok(reg)
+    }
+
+    /// Build the index of each type whose indexed fields changed (or that has none yet).
+    /// A write during the rebuild can leave an extra entry, never a missing one; an
+    /// extra entry only makes a query check one resource more.
+    fn ensure_indexes(&self) -> Result<(), RegisterError> {
+        let defs: Vec<(String, Arc<Profile>)> = {
+            let ps = self.profiles.read().unwrap();
+            ps.by_id
+                .values()
+                .flat_map(|p| p.types.keys().map(move |n| (n.clone(), p.clone())))
+                .collect()
+        };
+        for (name, p) in defs {
+            let t = &p.types[&name];
+            let want = serde_json::to_vec(&t.indexed).unwrap();
+            if self.kv.get(&k_idx_def(&name))?.as_deref() == Some(&want[..]) {
+                continue;
+            }
+            let prefix = k_idx_type(&name);
+            loop {
+                let rows = self.kv.range(&prefix, &prefix_end(&prefix), 1000)?;
+                if rows.is_empty() {
+                    break;
+                }
+                self.kv
+                    .apply_batch(rows.into_iter().map(|(k, _)| Op::Delete(k)).collect())?;
+            }
+            let tp = k_type_prefix(&name);
+            let mut start = tp.clone();
+            loop {
+                let rows = self.kv.range(&start, &prefix_end(&tp), 1000)?;
+                let Some((last, _)) = rows.last() else { break };
+                start = last.clone();
+                start.push(0);
+                let mut ops = Vec::new();
+                for (k, _) in &rows {
+                    let subject = String::from_utf8_lossy(&k[tp.len()..]).to_string();
+                    if let Some(r) = self.load_record(&subject)? {
+                        ops.extend(index_keys(t, &r).into_iter().map(|k| Op::Put(k, vec![])));
+                    }
+                }
+                self.kv.apply_batch(ops)?;
+            }
+            self.kv.apply_batch(vec![Op::Put(k_idx_def(&name), want)])?;
+        }
+        Ok(())
+    }
+
+    /// The resources that may match `e`, from the indexes, or `None` when the
+    /// expression cannot use them and the type has to be scanned. Over-approximates:
+    /// every candidate is still checked against the filter and the rules.
+    fn plan(
+        &self,
+        t: &SubjectType,
+        e: &Expr,
+        ctx: &cql2::ActorContext,
+    ) -> Result<Option<BTreeSet<String>>, RegisterError> {
+        use cql2::{CmpOp, Operand};
+        let values = |o: &Operand| -> Option<Vec<Value>> {
+            match o {
+                Operand::Literal(Value::Array(a)) => Some(a.clone()),
+                Operand::Literal(v) => Some(vec![v.clone()]),
+                Operand::Actor(None) => Some(vec![Value::String(ctx.id.clone())]),
+                Operand::Actor(Some(c)) => {
+                    Some(cql2::lookup(&ctx.claims, c).into_iter().cloned().collect())
+                }
+                Operand::Property(_) => None,
+            }
+        };
+        let lookup =
+            |field: &str, vals: Vec<Value>| -> Result<Option<BTreeSet<String>>, RegisterError> {
+                if !t.indexed.iter().any(|f| f == field) {
+                    return Ok(None);
+                }
+                let mut out = BTreeSet::new();
+                for v in vals {
+                    let Some(s) = idx_val(&v) else { continue };
+                    let prefix = k_idx_value(&t.name, field, &s);
+                    for (k, _) in self.kv.range(&prefix, &prefix_end(&prefix), usize::MAX)? {
+                        out.insert(String::from_utf8_lossy(&k[prefix.len()..]).to_string());
+                    }
+                }
+                Ok(Some(out))
+            };
+        match e {
+            Expr::And(xs) => {
+                let mut acc: Option<BTreeSet<String>> = None;
+                for x in xs {
+                    if let Some(s) = self.plan(t, x, ctx)? {
+                        acc = Some(match acc {
+                            Some(a) => a.intersection(&s).cloned().collect(),
+                            None => s,
+                        });
+                    }
+                }
+                Ok(acc)
+            }
+            Expr::Or(xs) => {
+                let mut all = BTreeSet::new();
+                for x in xs {
+                    match self.plan(t, x, ctx)? {
+                        Some(s) => all.extend(s),
+                        None => return Ok(None),
+                    }
+                }
+                Ok(Some(all))
+            }
+            Expr::Cmp(CmpOp::Eq, Operand::Property(p), o)
+            | Expr::Cmp(CmpOp::Eq, o, Operand::Property(p)) => match values(o) {
+                Some(v) => lookup(p, v),
+                None => Ok(None),
+            },
+            Expr::In(Operand::Property(p), list) => {
+                let mut vals = Vec::new();
+                for o in list {
+                    match values(o) {
+                        Some(v) => vals.extend(v),
+                        None => return Ok(None),
+                    }
+                }
+                lookup(p, vals)
+            }
+            Expr::Bool(false) => Ok(Some(BTreeSet::new())),
+            _ => Ok(None),
+        }
     }
 
     fn rule_refs<'a>(
@@ -478,6 +642,7 @@ impl Register {
             serde_json::to_vec(&raw).unwrap(),
         )])?;
         self.install(p);
+        self.ensure_indexes()?;
         Ok(raw)
     }
 
@@ -954,17 +1119,44 @@ impl Register {
             actor,
             cache: RefCell::default(),
         };
+        // Use the indexes when the filter and the mine rule allow it; otherwise scan.
+        let mut conds: Vec<Expr> = filter.iter().cloned().collect();
+        if req.mine {
+            match &t.rules.mine {
+                Some(m) => conds.push(m.clone()),
+                None => conds.push(Expr::Bool(false)),
+            }
+        }
+        let candidates: Option<Vec<String>> = self.plan(t, &Expr::And(conds), &ctx)?.map(|s| {
+            s.into_iter()
+                .filter(|x| req.cursor.as_ref().is_none_or(|c| x > c))
+                .collect()
+        });
+        let mut taken = 0;
         let mut results = Vec::new();
         let mut next = None;
         'scan: loop {
-            let rows = self.kv.range(&start, &end, 500)?;
-            if rows.is_empty() {
+            let batch: Vec<String> = match &candidates {
+                Some(c) => {
+                    let b: Vec<String> = c.iter().skip(taken).take(500).cloned().collect();
+                    taken += b.len();
+                    b
+                }
+                None => {
+                    let rows = self.kv.range(&start, &end, 500)?;
+                    if let Some((k, _)) = rows.last() {
+                        start = k.clone();
+                        start.push(0);
+                    }
+                    rows.iter()
+                        .map(|(k, _)| String::from_utf8_lossy(&k[prefix.len()..]).to_string())
+                        .collect()
+                }
+            };
+            if batch.is_empty() {
                 break;
             }
-            for (k, _) in &rows {
-                let subject = String::from_utf8_lossy(&k[prefix.len()..]).to_string();
-                start = k.clone();
-                start.push(0);
+            for subject in batch {
                 let Some(record) = self.load_record(&subject)? else {
                     continue;
                 };
@@ -1194,6 +1386,24 @@ impl Register {
                 event: c.event,
             }));
             final_records.insert(c.subject.clone(), c.record);
+        }
+        {
+            // Keep the indexes in step, in the same batch.
+            let ps = self.profiles.read().unwrap();
+            let keys = |r: &SubjectRecord| {
+                ps.subject_type(&r.type_name)
+                    .map(|(p, n)| index_keys(&p.types[n], r))
+                    .unwrap_or_default()
+            };
+            for (subject, record) in &final_records {
+                let new = keys(record);
+                let old = self
+                    .load_record(subject)?
+                    .map(|r| keys(&r))
+                    .unwrap_or_default();
+                ops.extend(old.difference(&new).map(|k| Op::Delete(k.clone())));
+                ops.extend(new.difference(&old).map(|k| Op::Put(k.clone(), vec![])));
+            }
         }
         for (subject, record) in &final_records {
             ops.push(Op::Put(

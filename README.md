@@ -115,6 +115,6 @@ curl -s localhost:8080/query -H "$T" -H 'content-type: application/json' \
 - OIDC: tokens van een IdP via JWKS (discovery, sleutelrotatie), naast HS256 en dev-tokens
 - batch-ontvangst (`application/cloudevents-batch+json`) en een OpenAPI per profiel (`/profiles/{id}/openapi.json`)
 - `POST /notificaties`: ZGW-notificaties worden events, met een zaakspiegel als voorbeeldprofiel
-- `POST /query` met filter, `fields`, paginering, `feedCursor` en `mine` (wat over de aanroeper gaat, volgens de `mine`-regel in het profiel; ook als attribuut op de eventstroom); nog zonder veldindexen (scant per type), zonder paden over verwijzingen en zonder `include`
+- `POST /query` met filter, `fields`, paginering, `feedCursor` en `mine` (wat over de aanroeper gaat, volgens de `mine`-regel in het profiel; ook als attribuut op de eventstroom); met veldindexen voor `=` en `IN` op de queryable velden, de verwijzingen en de velden van de `mine`-regel (andere filters scannen het type), nog zonder paden over verwijzingen en zonder `include`
 
 Nog niet: paden over verwijzingen, indexen, views, wissen, OIDC met JWKS, modules.

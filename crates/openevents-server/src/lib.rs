@@ -252,8 +252,12 @@ async fn post_notificatie(
             None,
         );
     };
+    let what = format!("{} {} {}", n.kanaal, n.resource, n.actie);
     match notificaties::handle(cfg, &state.register, n).await {
-        Ok(notificaties::Outcome::Stored) => StatusCode::NO_CONTENT.into_response(),
+        Ok(notificaties::Outcome::Stored) => {
+            tracing::info!("notificatie stored: {what}");
+            StatusCode::NO_CONTENT.into_response()
+        }
         Ok(notificaties::Outcome::Ignored(why)) => {
             tracing::debug!("notificatie ignored: {why}");
             StatusCode::NO_CONTENT.into_response()

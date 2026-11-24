@@ -48,6 +48,10 @@ pub struct SubjectType {
     pub part_of: bool,
     pub allow_commits: bool,
     pub rules: Rules,
+    /// Fields with an index: the queryable fields, the references and the own fields
+    /// the `mine` rule uses. A query that asks for one of their values reads the index
+    /// instead of every resource of the type.
+    pub indexed: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -213,9 +217,22 @@ impl Profile {
                         }
                     }
                 }
+                // Paths through a reference (gesprek.team) cannot be indexed on this type.
+                let mut indexed: Vec<String> = queryable.clone().unwrap_or_default();
+                indexed.extend(references.iter().cloned());
+                if let Some(m) = &rules.mine {
+                    indexed.extend(m.properties());
+                }
+                indexed.retain(|p| {
+                    let first = p.split('.').next().unwrap_or("");
+                    !(p.contains('.') && references.iter().any(|r| r == first))
+                });
+                indexed.sort();
+                indexed.dedup();
                 types.insert(
                     name.clone(),
                     SubjectType {
+                        indexed,
                         name: name.clone(),
                         fields,
                         references,

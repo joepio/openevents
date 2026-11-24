@@ -262,7 +262,7 @@ function timeline(ids) {
     }).catch(() => {}))).then(render);
   }
   const events = ids.flatMap((id) => S.log.get(id) || []).sort((a, b) => (a.time || "").localeCompare(b.time || "") || +a.sequence - +b.sequence);
-  const what = (e) => (S.titles[e.type] || e.type.split(".").slice(-2).join(" ")) + (e.data?.resourceData?.statustypeOmschrijving ? ": " + e.data.resourceData.statustypeOmschrijving : "");
+  const what = (e) => (S.titles[e.type] || e.type.split(".").slice(-2).join(" ")) + ((n) => n ? ": " + n : "")(e.data?.resourceData?.statustypeOmschrijving || e.data?.patch?.statusOmschrijving);
   // Eén handeling met meerdere commits (status en zaak) is één regel: per transactie de meest zeggende.
   const one = new Map();
   for (const e of events) { const k = e.transactionid || e.id, cur = one.get(k); if (!cur || what(e).length > what(cur).length) one.set(k, e); }

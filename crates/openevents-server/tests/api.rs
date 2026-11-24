@@ -1434,3 +1434,65 @@ async fn mine_is_a_rule_in_the_profile() {
     let (_, me, _) = call(&app, "GET", "/me", Some(SUZANNE), None).await;
     assert_eq!(me["id"], SUZANNE_ID);
 }
+
+#[tokio::test]
+async fn indexes_follow_changes() {
+    let app = app();
+    install(&app).await;
+    let femke = "dev:https://id.example.nl/femke|rol=medewerker|team=vergunningen";
+    let jan = "dev:https://id.example.nl/jan|rol=inwoner";
+    let (s, b, _) = call(&app, "POST", "/events", Some(femke), Some(ev("t1", "nl.vng.taken.taak.aangemaakt", "urn:taak:1",
+        json!({ "resourceData": { "titel": "Stuur een foto", "voor": { "partij": "https://id.example.nl/jan" }, "team": "vergunningen" } })))).await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let count = |b: &Value| b["results"].as_array().unwrap().len();
+    let q = |f: &str| json!({ "type": "nl.vng.taken.taak", "filter": f });
+    let (_, b, _) = call(
+        &app,
+        "POST",
+        "/query",
+        Some(femke),
+        Some(q("status = 'open'")),
+    )
+    .await;
+    assert_eq!(count(&b), 1, "{b}");
+    let (_, b, _) = call(
+        &app,
+        "POST",
+        "/query",
+        Some(jan),
+        Some(json!({ "mine": true })),
+    )
+    .await;
+    assert_eq!(count(&b), 1, "{b}");
+    call(
+        &app,
+        "POST",
+        "/events",
+        Some(jan),
+        Some(ev(
+            "t2",
+            "nl.vng.taken.taak.afgerond",
+            "urn:taak:1",
+            json!({ "patch": {} }),
+        )),
+    )
+    .await;
+    let (_, b, _) = call(
+        &app,
+        "POST",
+        "/query",
+        Some(femke),
+        Some(q("status = 'open'")),
+    )
+    .await;
+    assert_eq!(count(&b), 0, "the old value left the index: {b}");
+    let (_, b, _) = call(
+        &app,
+        "POST",
+        "/query",
+        Some(femke),
+        Some(q("status IN ('afgerond', 'vervallen')")),
+    )
+    .await;
+    assert_eq!(count(&b), 1, "{b}");
+}
