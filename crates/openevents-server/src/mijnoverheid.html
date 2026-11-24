@@ -442,6 +442,7 @@ async function start(token) {
   }
   // Demo: bekijk als een inwoner uit de profielen.
   sel.hidden = false;
+  if (S.cfg.devReadOnly) sel.title = "Alleen bekijken. Log in om iets te doen.";
   sel.innerHTML = inwoners.map((p) => `<option value="${esc(p.id)}">${esc(p.label)}</option>`).join("");
   let saved; try { saved = localStorage.getItem("mijn-demodam-wie"); } catch {}
   sel.value = inwoners.some((p) => p.id === saved) ? saved : (inwoners.find((p) => p.id.endsWith("/jan")) || inwoners[0]).id;

@@ -84,6 +84,7 @@ docker run -p 8080:8080 -v openevents:/data \
 | `OPENEVENTS_ADDR` | adres (standaard `0.0.0.0:8080`) |
 | `OPENEVENTS_JWT_SECRET` | geheim voor HS256-tokens; `sub` is de actor, alle claims zijn beschikbaar in `actor('claim')` |
 | `OPENEVENTS_DEV_AUTH` | `true` staat `Bearer dev:<actor>\|claim=waarde` toe, alleen voor demo's en tests |
+| | `read`: dev-tokens mogen lezen ("Bekijk als") maar niet schrijven; schrijven vraagt een echt token (OIDC of `OPENEVENTS_JWT_SECRET`). De simulator tekent zijn eigen HS256-tokens als hij `OPENEVENTS_JWT_SECRET` kent. |
 | `OPENEVENTS_ADMINS` | actors (komma's) die profielen mogen registreren |
 | `OPENEVENTS_PROFILES` | map met profielen (`.json`) die bij het starten worden geïnstalleerd |
 | `OPENEVENTS_OIDC_ISSUER`, `…_JWKS_URL`, `…_AUDIENCE`, `OPENEVENTS_ACTOR_CLAIM`, `OPENEVENTS_ACTOR_PREFIX`, `OPENEVENTS_UI_CLIENT_ID` | tokens van een eigen IdP (OAuth2 client credentials voor leveranciers), zie [docs/aansluiten.md](docs/aansluiten.md) |

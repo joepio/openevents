@@ -57,7 +57,37 @@ impl Actor {
             source,
         }
     }
+    /// With OPENEVENTS_JWT_SECRET: an HS256 token signed with the secret the server
+    /// shares (works when dev tokens are read-only). `sub` is the full id and
+    /// `preferred_username` the short name, so both actor-claim settings give the
+    /// same actor. Without it: a dev token.
     fn token(&self) -> String {
+        if let Some(secret) = std::env::var("OPENEVENTS_JWT_SECRET")
+            .ok()
+            .filter(|s| !s.is_empty())
+        {
+            let mut claims = serde_json::Map::new();
+            claims.insert("sub".into(), json!(self.id));
+            claims.insert("preferred_username".into(), json!(self.slug));
+            claims.insert("exp".into(), json!(Utc::now().timestamp() + 3600));
+            for (k, v) in &self.claims {
+                let vals: Vec<&str> = v.split(',').collect();
+                claims.insert(
+                    (*k).into(),
+                    if vals.len() == 1 {
+                        json!(v)
+                    } else {
+                        json!(vals)
+                    },
+                );
+            }
+            return jsonwebtoken::encode(
+                &jsonwebtoken::Header::default(),
+                &claims,
+                &jsonwebtoken::EncodingKey::from_secret(secret.as_bytes()),
+            )
+            .expect("sign token");
+        }
         let mut t = format!("dev:{}", self.id);
         for (k, v) in &self.claims {
             t.push_str(&format!("|{k}={v}"));

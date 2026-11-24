@@ -28,6 +28,8 @@ use serde_json::{Map, Value};
 pub struct AuthConfig {
     pub jwt_secret: Option<String>,
     pub dev_auth: bool,
+    /// `OPENEVENTS_DEV_AUTH=read`: dev tokens may read ("Bekijk als"), not write.
+    pub dev_read_only: bool,
     pub admins: Vec<String>,
     pub oidc: Option<Arc<Oidc>>,
     /// Claim that holds the actor id. Empty means `sub`.
@@ -162,8 +164,9 @@ impl AuthConfig {
                 .ok()
                 .filter(|s| !s.is_empty()),
             dev_auth: std::env::var("OPENEVENTS_DEV_AUTH")
-                .map(|v| v == "true" || v == "1")
+                .map(|v| v == "true" || v == "1" || v == "read")
                 .unwrap_or(false),
+            dev_read_only: std::env::var("OPENEVENTS_DEV_AUTH").is_ok_and(|v| v == "read"),
             admins: std::env::var("OPENEVENTS_ADMINS")
                 .map(|v| {
                     v.split(',')
@@ -235,6 +238,15 @@ impl AuthConfig {
         }
         let claims = self.oidc.as_ref()?.verify(token, &header)??;
         self.actor_from_claims(claims)
+    }
+
+    /// Whether this request may write: with `dev_read_only`, a dev token may not.
+    pub fn may_write(&self, headers: &HeaderMap) -> bool {
+        !self.dev_read_only
+            || !headers
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|v| v.get(7..).is_some_and(|t| t.trim().starts_with("dev:")))
     }
 
     pub async fn from_headers(&self, headers: &HeaderMap) -> Option<Actor> {

@@ -131,6 +131,19 @@ fn unauthorized() -> Response {
 }
 
 #[allow(clippy::result_large_err)]
+/// The actor of a request that writes: dev tokens are refused when they are read-only.
+async fn writer(state: &AppState, headers: &HeaderMap) -> Result<Actor, Response> {
+    if !state.auth.may_write(headers) {
+        return Err(problem(
+            StatusCode::FORBIDDEN,
+            "Read only",
+            "Persona's zijn hier alleen om te bekijken. Log in om iets te doen.",
+            None,
+        ));
+    }
+    actor(state, headers).await
+}
+
 async fn actor(state: &AppState, headers: &HeaderMap) -> Result<Actor, Response> {
     state
         .auth
@@ -159,7 +172,7 @@ async fn post_events(
     headers: HeaderMap,
     body: Option<Json<Value>>,
 ) -> Response {
-    let actor = match actor(&state, &headers).await {
+    let actor = match writer(&state, &headers).await {
         Ok(a) => a,
         Err(r) => return r,
     };
@@ -490,7 +503,7 @@ async fn delete_subject(
     Path(subject): Path<String>,
     Query(p): Query<PurgeParams>,
 ) -> Response {
-    let actor = match actor(&state, &headers).await {
+    let actor = match writer(&state, &headers).await {
         Ok(a) => a,
         Err(r) => return r,
     };
@@ -602,7 +615,7 @@ async fn put_profile(
     Path(id): Path<String>,
     body: Option<Json<Value>>,
 ) -> Response {
-    let actor = match actor(&state, &headers).await {
+    let actor = match writer(&state, &headers).await {
         Ok(a) => a,
         Err(r) => return r,
     };
@@ -692,5 +705,7 @@ async fn ui_config(State(state): State<AppState>) -> Json<Value> {
         (Some(issuer), Some(client_id)) => json!({ "issuer": issuer, "clientId": client_id }),
         _ => Value::Null,
     };
-    Json(json!({ "devAuth": state.auth.dev_auth, "personas": personas, "login": login }))
+    Json(
+        json!({ "devAuth": state.auth.dev_auth, "devReadOnly": state.auth.dev_read_only, "personas": personas, "login": login }),
+    )
 }

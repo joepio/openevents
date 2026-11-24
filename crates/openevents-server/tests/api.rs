@@ -1600,6 +1600,103 @@ async fn health_and_metrics() {
     assert_eq!(s, StatusCode::OK);
     let text = b.as_str().unwrap();
     assert!(text.contains("openevents_events_total 1"), "{text}");
-    assert!(text.contains("openevents_notificaties_total{outcome=\"stored\"}"), "{text}");
-    assert!(!text.contains("openevents_last_event_timestamp_seconds 0\n"), "{text}");
+    assert!(
+        text.contains("openevents_notificaties_total{outcome=\"stored\"}"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("openevents_last_event_timestamp_seconds 0\n"),
+        "{text}"
+    );
+}
+
+#[tokio::test]
+async fn read_only_personas_may_look_not_write() {
+    let register = Arc::new(Register::open(Arc::new(MemoryStore::new())).unwrap());
+    let app = router(AppState {
+        register,
+        auth: AuthConfig {
+            jwt_secret: Some("test-secret".into()),
+            dev_auth: true,
+            dev_read_only: true,
+            admins: vec!["urn:admin".into()],
+            ..Default::default()
+        },
+        tickets: Arc::new(Tickets::default()),
+        schemas: Arc::new(openevents_server::schemas::Schemas::new(Some(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/schemas").into(),
+        ))),
+        notificaties: None,
+    });
+    let jwt = |sub: &str| {
+        jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &json!({ "sub": sub, "exp": 4_000_000_000u64 }),
+            &jsonwebtoken::EncodingKey::from_secret(b"test-secret"),
+        )
+        .unwrap()
+    };
+    let (s, _, _) = call(
+        &app,
+        "PUT",
+        "/profiles/nl.vng.gesprekken",
+        Some(ADMIN),
+        Some(profile("gesprekken")),
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN, "a dev admin may not write either");
+    let (s, _, _) = call(
+        &app,
+        "PUT",
+        "/profiles/nl.vng.gesprekken",
+        Some(&jwt("urn:admin")),
+        Some(profile("gesprekken")),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let gesprek = ev(
+        "e1",
+        "nl.vng.gesprekken.gesprek.gestart",
+        G1,
+        json!({ "type": "nl.vng.gesprekken.gesprek", "resourceData": {
+        "gespreksonderwerp": "Vraag", "team": "wmo",
+        "gespreksdeelnames": [ { "type": "partij", "partij": SUZANNE_ID, "naam": "Suzanne" } ] } }),
+    );
+    let (s, b, _) = call(
+        &app,
+        "POST",
+        "/events",
+        Some(SUZANNE),
+        Some(gesprek.clone()),
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN, "{b}");
+    assert!(b["detail"].as_str().unwrap().contains("Log in"), "{b}");
+    let (s, b, _) = call(
+        &app,
+        "POST",
+        "/events",
+        Some(&jwt(SUZANNE_ID)),
+        Some(gesprek),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let (s, _, _) = call(
+        &app,
+        "GET",
+        &format!("/subjects/{}", enc(G1)),
+        Some(SUZANNE),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "reading with a persona still works");
+    let (s, _, _) = call(
+        &app,
+        "POST",
+        "/query",
+        Some(SUZANNE),
+        Some(json!({ "mine": true })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
 }

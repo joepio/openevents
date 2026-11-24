@@ -1003,6 +1003,7 @@ name = "openevents-sim"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "jsonwebtoken",
  "rand 0.8.8",
  "serde_json",
  "ureq",

@@ -16,3 +16,4 @@ chrono.workspace = true
 uuid.workspace = true
 ureq = { version = "2", features = ["json"] }
 rand = "0.8"
+jsonwebtoken = { version = "9", default-features = false }
