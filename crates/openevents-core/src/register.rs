@@ -567,6 +567,19 @@ impl Register {
         self.tx.subscribe()
     }
 
+    /// Open receivers of the live stream (SSE clients).
+    pub fn stream_clients(&self) -> usize {
+        self.tx.receiver_count()
+    }
+
+    /// The last event in the log.
+    pub fn last_event(&self) -> Result<Option<Value>, RegisterError> {
+        match self.kv.last_in_range(b"log/", &prefix_end(b"log/"))? {
+            Some((_, v)) => Ok(Some(parse_json(&v)?)),
+            None => Ok(None),
+        }
+    }
+
     pub fn head(&self) -> Result<u64, RegisterError> {
         Ok(match self.kv.get(K_SEQ)? {
             Some(b) => String::from_utf8_lossy(&b).parse().unwrap_or(0),

@@ -156,8 +156,11 @@ impl NotificatiesConfig {
     pub async fn keep_subscribed(self: std::sync::Arc<Self>) {
         loop {
             match self.ensure_subscribed().await {
-                Ok(true) => tracing::info!("subscribed at Open Notificaties"),
-                Ok(false) => {}
+                Ok(true) => {
+                    crate::metrics::subscription_ok();
+                    tracing::info!("subscribed at Open Notificaties")
+                }
+                Ok(false) => crate::metrics::subscription_ok(),
                 Err(e) => tracing::warn!("Open Notificaties: {e}"),
             }
             tokio::time::sleep(Duration::from_secs(300)).await;

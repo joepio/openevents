@@ -1588,3 +1588,18 @@ async fn retention_purges_closed_gesprekken_after_a_year() {
     );
     assert_eq!(reg.sweep(later).await.unwrap(), vec![G1.to_string()]);
 }
+
+#[tokio::test]
+async fn health_and_metrics() {
+    let app = app();
+    install(&app).await;
+    start_gesprek(&app).await;
+    let (s, b, _) = call(&app, "GET", "/health", None, None).await;
+    assert_eq!((s, b), (StatusCode::OK, json!("ok")));
+    let (s, b, _) = call(&app, "GET", "/metrics", None, None).await;
+    assert_eq!(s, StatusCode::OK);
+    let text = b.as_str().unwrap();
+    assert!(text.contains("openevents_events_total 1"), "{text}");
+    assert!(text.contains("openevents_notificaties_total{outcome=\"stored\"}"), "{text}");
+    assert!(!text.contains("openevents_last_event_timestamp_seconds 0\n"), "{text}");
+}

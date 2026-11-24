@@ -53,3 +53,5 @@ Nog niet: vertrouwelijkheidaanduiding in de leesregel (dat vraagt een vergelijki
 | `OPENEVENTS_NOTIFICATIES_ACTOR` | actor-id van de adapter, standaard `urn:openevents:notificaties` (claim `rol=systeem`) |
 | `OPENEVENTS_PSEUDONYM_KEY` | geheime sleutel: BSN's in tokens en in opgehaalde ZGW-resources worden `pseudo:`-pseudoniemen (zie [wissen.md](wissen.md)) |
 | `OPENEVENTS_PSEUDONYM_CLAIMS` | welke claims een pseudoniem krijgen, komma's, standaard `bsn` |
+| `OPENEVENTS_BACKUP_DIR`, `OPENEVENTS_BACKUP_HOURS` | consistente backup elke n uur (standaard 24), laatste zeven bewaard (zie [beheer.md](beheer.md)) |
+| `OPENEVENTS_RESTORE` | backup die bij het opstarten in een lege opslag wordt geladen |

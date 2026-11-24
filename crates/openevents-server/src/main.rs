@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use openevents_core::kv::RedbStore;
+use openevents_core::kv::{KvStore, RedbStore};
 use openevents_core::{Actor, Register};
 use openevents_server::auth::{AuthConfig, Tickets};
 use openevents_server::{router, AppState};
@@ -19,8 +19,29 @@ async fn main() {
     let data_dir =
         PathBuf::from(std::env::var("OPENEVENTS_DATA").unwrap_or_else(|_| "data".into()));
     std::fs::create_dir_all(&data_dir).expect("create data dir");
-    let store = RedbStore::open(&data_dir.join("openevents.redb")).expect("open store");
-    let register = Arc::new(Register::open(Arc::new(store)).expect("open register"));
+    let store: Arc<dyn KvStore> =
+        Arc::new(RedbStore::open(&data_dir.join("openevents.redb")).expect("open store"));
+    // OPENEVENTS_RESTORE: load a backup into an empty store before anything else.
+    if let Ok(file) = std::env::var("OPENEVENTS_RESTORE") {
+        match openevents_server::backup::restore(store.as_ref(), std::path::Path::new(&file)) {
+            Ok(n) => tracing::info!("restored {n} keys from {file}"),
+            Err(e) => tracing::warn!("restore from {file} skipped: {e}"),
+        }
+    }
+    let register = Arc::new(Register::open(store.clone()).expect("open register"));
+    // OPENEVENTS_BACKUP_DIR: a consistent backup every OPENEVENTS_BACKUP_HOURS (24); last 7 kept.
+    if let Ok(dir) = std::env::var("OPENEVENTS_BACKUP_DIR") {
+        let hours: u64 = std::env::var("OPENEVENTS_BACKUP_HOURS")
+            .ok()
+            .and_then(|h| h.parse().ok())
+            .unwrap_or(24);
+        std::fs::create_dir_all(&dir).expect("create backup dir");
+        tokio::spawn(openevents_server::backup::keep_backing_up(
+            store.clone(),
+            PathBuf::from(dir),
+            std::time::Duration::from_secs(hours.max(1) * 3600),
+        ));
+    }
 
     // Shared schemas: OPENEVENTS_SCHEMAS, or a `schemas` directory next to the profiles.
     let schemas = Arc::new(match std::env::var("OPENEVENTS_SCHEMAS") {
@@ -101,6 +122,7 @@ async fn main() {
                 tick.tick().await;
                 match register.sweep(chrono::Utc::now()).await {
                     Ok(p) if !p.is_empty() => {
+                        openevents_server::metrics::purged(p.len());
                         tracing::info!("retention: purged {} resources", p.len())
                     }
                     Ok(_) => {}

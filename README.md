@@ -31,6 +31,7 @@ Tijdens het fieldlab MijnGesprekken (10 november 2026) bleek er belangstelling v
 - [Architectuur](docs/architectuur.md): log, stand, indexen, API
 - [Query-engine](docs/query.md): taal, paden, representaties, live
 - [Autorisatie](docs/autorisatie.md): autorisatie als query, regels in het profiel, velden per rol
+- [Beheer](docs/beheer.md): backup en herstel, `/health`, `/metrics`
 - [Wissen en bewaren](docs/wissen.md): definitief verwijderen, bewaartermijnen, BSN-pseudoniemen
 - [Profielen](docs/profielen.md): hoe een domein erop landt, met Gesprekken als eerste
 - [Modules](docs/modules.md): domeinlogica als kleine open modules, met bezwaar als voorbeeld

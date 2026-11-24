@@ -1,6 +1,8 @@
 //! HTTP API of OpenEvents (docs/architectuur.md, "API-oppervlak").
 
 pub mod auth;
+pub mod backup;
+pub mod metrics;
 pub mod mijn;
 pub mod notificaties;
 pub mod openapi;
@@ -40,7 +42,8 @@ pub struct AppState {
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(index))
-        .route("/health", get(|| async { "ok" }))
+        .route("/health", get(health))
+        .route("/metrics", get(metrics))
         .route("/me", get(get_me))
         .route("/events", get(get_events).post(post_events))
         .route("/events/tickets", post(post_ticket))
@@ -234,6 +237,32 @@ async fn post_batch(state: &AppState, actor: &Actor, events: Vec<Value>) -> Resp
         .into_response()
 }
 
+/// Ready when the store answers.
+async fn health(State(state): State<AppState>) -> Response {
+    match state.register.head() {
+        Ok(_) => "ok".into_response(),
+        Err(e) => (StatusCode::SERVICE_UNAVAILABLE, e.to_string()).into_response(),
+    }
+}
+
+/// Prometheus metrics (no personal data: counts and times only).
+async fn metrics(State(state): State<AppState>) -> Response {
+    let head = state.register.head().unwrap_or(0);
+    let last = state
+        .register
+        .last_event()
+        .ok()
+        .flatten()
+        .and_then(|e| e["time"].as_str().map(String::from))
+        .and_then(|t| chrono::DateTime::parse_from_rfc3339(&t).ok())
+        .map(|t| t.timestamp().max(0) as u64);
+    (
+        [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+        metrics::render(head, last, state.register.stream_clients()),
+    )
+        .into_response()
+}
+
 async fn post_notificatie(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -260,15 +289,18 @@ async fn post_notificatie(
     match notificaties::handle(cfg, &state.register, n).await {
         Ok(notificaties::Outcome::Stored) => {
             tracing::info!("notificatie stored: {what}");
+            metrics::notificatie("stored");
             StatusCode::NO_CONTENT.into_response()
         }
         Ok(notificaties::Outcome::Ignored(why)) => {
             tracing::debug!("notificatie ignored: {why}");
+            metrics::notificatie("ignored");
             StatusCode::NO_CONTENT.into_response()
         }
         // Open Notificaties retries on an error, which is what we want here.
         Err(e) => {
             tracing::warn!("notificatie failed: {e}");
+            metrics::notificatie("failed");
             problem(
                 StatusCode::BAD_GATEWAY,
                 "Notificatie not processed",
@@ -465,6 +497,7 @@ async fn delete_subject(
     match state.register.purge(&actor, &subject, p.cascade).await {
         Ok(purged) => {
             tracing::info!("purged by {}: {}", actor.id, purged.join(", "));
+            metrics::purged(purged.len());
             Json(json!({ "purged": purged })).into_response()
         }
         Err(e) => error_response(e),
