@@ -57,7 +57,7 @@ fn app(issuer: &str) -> Router {
         schemas: Arc::new(openevents_server::schemas::Schemas::new(Some(
             concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/schemas").into(),
         ))),
-        notificaties: None,
+        notificaties: vec![],
     })
 }
 

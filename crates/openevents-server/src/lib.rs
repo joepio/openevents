@@ -34,7 +34,8 @@ pub struct AppState {
     pub auth: AuthConfig,
     pub tickets: Arc<Tickets>,
     /// `POST /notificaties`, only when configured.
-    pub notificaties: Option<Arc<NotificatiesConfig>>,
+    /// ZGW sources (Notificaties adapter); a notificatie is matched by its auth.
+    pub notificaties: Vec<Arc<NotificatiesConfig>>,
     /// Shared JSON Schemas that profiles refer to (`$ref` to the VNG API Lab).
     pub schemas: Arc<schemas::Schemas>,
 }
@@ -281,15 +282,15 @@ async fn post_notificatie(
     headers: HeaderMap,
     body: Option<Json<notificaties::Notificatie>>,
 ) -> Response {
-    let Some(cfg) = &state.notificaties else {
+    if state.notificaties.is_empty() {
         return error_response(RegisterError::NotFound);
-    };
+    }
     let auth = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok());
-    if !cfg.authorized(auth) {
+    let Some(cfg) = state.notificaties.iter().find(|c| c.authorized(auth)) else {
         return unauthorized();
-    }
+    };
     let Some(Json(n)) = body else {
         return problem(
             StatusCode::BAD_REQUEST,

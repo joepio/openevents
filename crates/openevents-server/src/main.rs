@@ -95,9 +95,11 @@ async fn main() {
     if auth.jwt_secret.is_none() && !auth.dev_auth && auth.oidc.is_none() {
         tracing::warn!("no OIDC, no OPENEVENTS_JWT_SECRET and no OPENEVENTS_DEV_AUTH: every request will be unauthorized");
     }
-    let notificaties =
-        openevents_server::notificaties::NotificatiesConfig::from_env().map(Arc::new);
-    if let Some(n) = &notificaties {
+    let notificaties: Vec<_> = openevents_server::notificaties::NotificatiesConfig::all_from_env()
+        .into_iter()
+        .map(Arc::new)
+        .collect();
+    for n in &notificaties {
         if n.subscribe.is_some() {
             tokio::spawn(n.clone().keep_subscribed());
         }

@@ -33,6 +33,10 @@
 //!   OpenEvents walks all zaken there, with their rollen, statussen, resultaat and
 //!   documenten, as if a notificatie had come for each. So zaken from before the
 //!   abonnement are mirrored too. Running it again changes nothing.
+//! - `OPENEVENTS_ZGW_SOURCES`: more ZGW sources (a second zaakregister such as OneGround),
+//!   each with the variables above under its own prefix: `og` reads
+//!   `OPENEVENTS_OG_NOTIFICATIES_AUTH`, `OPENEVENTS_OG_ZGW_CLIENT_ID`, ... All share the
+//!   callback `/notificaties`; the Authorization header says which source it is.
 
 use std::time::Duration;
 
@@ -63,28 +67,50 @@ pub struct Subscribe {
 }
 
 impl NotificatiesConfig {
+    /// The default source (`OPENEVENTS_NOTIFICATIES_AUTH` etc.) and one per name in
+    /// `OPENEVENTS_ZGW_SOURCES` (`og` reads `OPENEVENTS_OG_NOTIFICATIES_AUTH`,
+    /// `OPENEVENTS_OG_ZGW_CLIENT_ID`, ...). A notificatie is matched to its source by
+    /// its Authorization header, so give every source its own.
+    pub fn all_from_env() -> Vec<Self> {
+        let mut out: Vec<Self> = Self::from_env_prefixed("").into_iter().collect();
+        for name in std::env::var("OPENEVENTS_ZGW_SOURCES")
+            .unwrap_or_default()
+            .split(',')
+            .map(|n| n.trim().to_uppercase())
+            .filter(|n| !n.is_empty())
+        {
+            match Self::from_env_prefixed(&format!("{name}_")) {
+                Some(c) => out.push(c),
+                None => tracing::warn!("source {name}: no OPENEVENTS_{name}_NOTIFICATIES_AUTH"),
+            }
+        }
+        out
+    }
+
     pub fn from_env() -> Option<Self> {
+        Self::from_env_prefixed("")
+    }
+
+    fn from_env_prefixed(prefix: &str) -> Option<Self> {
         let env = |k: &str| std::env::var(k).ok().filter(|s| !s.is_empty());
+        let src = |k: &str| env(&format!("OPENEVENTS_{prefix}{k}"));
         Some(NotificatiesConfig {
-            auth: env("OPENEVENTS_NOTIFICATIES_AUTH")?,
-            zgw_client_id: env("OPENEVENTS_ZGW_CLIENT_ID"),
-            zgw_secret: env("OPENEVENTS_ZGW_SECRET"),
-            actor: env("OPENEVENTS_NOTIFICATIES_ACTOR")
+            auth: src("NOTIFICATIES_AUTH")?,
+            zgw_client_id: src("ZGW_CLIENT_ID"),
+            zgw_secret: src("ZGW_SECRET"),
+            actor: src("NOTIFICATIES_ACTOR")
+                .or_else(|| env("OPENEVENTS_NOTIFICATIES_ACTOR"))
                 .unwrap_or_else(|| "urn:openevents:notificaties".into()),
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(15))
                 .build()
                 .expect("http client"),
             pseudonym: crate::pseudonym::Pseudonym::from_env().map(std::sync::Arc::new),
-            import_zaken: env("OPENEVENTS_IMPORT_ZAKEN")
-                .map(|u| u.trim_end_matches('/').to_string()),
-            subscribe: match (
-                env("OPENEVENTS_NOTIFICATIES_API"),
-                env("OPENEVENTS_PUBLIC_URL"),
-            ) {
+            import_zaken: src("IMPORT_ZAKEN").map(|u| u.trim_end_matches('/').to_string()),
+            subscribe: match (src("NOTIFICATIES_API"), env("OPENEVENTS_PUBLIC_URL")) {
                 (Some(api), Some(public)) => Some(Subscribe {
                     api: api.trim_end_matches('/').to_string(),
-                    kanalen: env("OPENEVENTS_NOTIFICATIES_KANALEN")
+                    kanalen: src("NOTIFICATIES_KANALEN")
                         .unwrap_or_else(|| "zaken".into())
                         .split(',')
                         .map(|k| k.trim().to_string())
@@ -158,10 +184,22 @@ impl NotificatiesConfig {
             match self.ensure_subscribed().await {
                 Ok(true) => {
                     crate::metrics::subscription_ok();
-                    tracing::info!("subscribed at Open Notificaties")
+                    tracing::info!(
+                        "subscribed at {}",
+                        self.subscribe
+                            .as_ref()
+                            .map(|s| s.api.as_str())
+                            .unwrap_or("")
+                    )
                 }
                 Ok(false) => crate::metrics::subscription_ok(),
-                Err(e) => tracing::warn!("Open Notificaties: {e}"),
+                Err(e) => tracing::warn!(
+                    "Notificaties {}: {e}",
+                    self.subscribe
+                        .as_ref()
+                        .map(|s| s.api.as_str())
+                        .unwrap_or("")
+                ),
             }
             tokio::time::sleep(Duration::from_secs(300)).await;
         }

@@ -125,7 +125,7 @@ fn app(register: Arc<Register>) -> Router {
         schemas: Arc::new(openevents_server::schemas::Schemas::new(Some(
             concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/schemas").into(),
         ))),
-        notificaties: Some(Arc::new(NotificatiesConfig {
+        notificaties: vec![Arc::new(NotificatiesConfig {
             auth: AUTH.into(),
             zgw_client_id: Some("openevents".into()),
             zgw_secret: Some("zgw-secret".into()),
@@ -134,7 +134,7 @@ fn app(register: Arc<Register>) -> Router {
             import_zaken: None,
             pseudonym: None,
             subscribe: None,
-        })),
+        })],
     })
 }
 
@@ -538,7 +538,7 @@ async fn bsn_is_stored_as_a_pseudonym() {
         },
         tickets: Arc::new(Tickets::default()),
         schemas: Arc::new(openevents_server::schemas::Schemas::new(None)),
-        notificaties: None,
+        notificaties: vec![],
     });
     let profile: Value =
         serde_json::from_str(include_str!("../../../examples/profiles/zgw-zaken.json")).unwrap();
@@ -584,4 +584,92 @@ async fn bsn_is_stored_as_a_pseudonym() {
     );
     let (_, z) = call(&app, "GET", "/mijn/zaken/zaken", suzanne, None).await;
     assert_eq!(z["count"], 1, "{z}");
+}
+
+#[tokio::test]
+async fn two_zaakregisters_side_by_side() {
+    let flag = || Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let oz = fake_open_zaak(Arc::new(AtomicUsize::new(0)), flag()).await;
+    let og = fake_open_zaak(Arc::new(AtomicUsize::new(0)), flag()).await;
+    let register = Arc::new(Register::open(Arc::new(MemoryStore::new())).unwrap());
+    let source = |auth: &str, actor: &str| {
+        Arc::new(NotificatiesConfig {
+            auth: auth.into(),
+            zgw_client_id: Some("openevents".into()),
+            zgw_secret: Some("zgw-secret".into()),
+            actor: actor.into(),
+            client: reqwest::Client::new(),
+            import_zaken: None,
+            pseudonym: None,
+            subscribe: None,
+        })
+    };
+    let app = router(AppState {
+        register,
+        auth: AuthConfig {
+            dev_auth: true,
+            admins: vec!["urn:admin".into()],
+            ..Default::default()
+        },
+        tickets: Arc::new(Tickets::default()),
+        schemas: Arc::new(openevents_server::schemas::Schemas::new(None)),
+        notificaties: vec![source("Bearer oz", "urn:oz"), source("Bearer og", "urn:og")],
+    });
+    let profile: Value =
+        serde_json::from_str(include_str!("../../../examples/profiles/zgw-zaken.json")).unwrap();
+    call(
+        &app,
+        "PUT",
+        "/profiles/nl.vng.zgw.zaken",
+        "Bearer dev:urn:admin",
+        Some(profile),
+    )
+    .await;
+    for (base, auth) in [(&oz, "Bearer oz"), (&og, "Bearer og")] {
+        let (s, b) = call(
+            &app,
+            "POST",
+            "/notificaties",
+            auth,
+            Some(notificatie(base, "zaak", "zaken/z1", "create")),
+        )
+        .await;
+        assert_eq!(s, StatusCode::NO_CONTENT, "{b}");
+        let rol = notificatie(base, "rol", "rollen/r1", "create");
+        let (s, b) = call(&app, "POST", "/notificaties", auth, Some(rol)).await;
+        assert_eq!(s, StatusCode::NO_CONTENT, "{b}");
+    }
+    let (s, _) = call(
+        &app,
+        "POST",
+        "/notificaties",
+        "Bearer other",
+        Some(notificatie(&og, "zaak", "zaken/z1", "create")),
+    )
+    .await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+    let (_, b) = call(&app, "GET", "/events", "Bearer dev:urn:admin", None).await;
+    let events = b["events"].as_array().unwrap();
+    for (base, actor) in [(&oz, "urn:oz"), (&og, "urn:og")] {
+        let zaak = format!("{base}/zaken/api/v1/zaken/z1");
+        assert!(
+            events
+                .iter()
+                .any(|e| e["subject"] == json!(zaak) && e["actor"] == json!(actor)),
+            "{zaak} by {actor}: {b}"
+        );
+    }
+    let (_, b) = call(
+        &app,
+        "POST",
+        "/query",
+        "Bearer dev:https://id.example.nl/suzanne|bsn=999993653|rol=inwoner",
+        Some(json!({ "type": "nl.vng.zgw.zaak", "mine": true })),
+    )
+    .await;
+    assert_eq!(
+        b["results"].as_array().map(|r| r.len()),
+        Some(2),
+        "one overview over both registers: {b}"
+    );
 }
