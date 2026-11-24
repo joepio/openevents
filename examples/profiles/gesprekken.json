@@ -72,6 +72,7 @@
       "references": [
         "aanleidingZaak"
       ],
+      "retention": { "from": "momentEindeGesprek", "keep": "P1Y" },
       "rules": {
         "read": "(gespreksdeelnames.partij = actor() OR gespreksdeelnames.actor = actor()) OR team = actor('team') OR actor('rol') = 'kcc'",
         "create": "(gespreksdeelnames.partij = actor() OR gespreksdeelnames.actor = actor()) OR team = actor('team')",

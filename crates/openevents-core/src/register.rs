@@ -9,6 +9,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, RwLock};
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::{broadcast, Mutex};
@@ -1431,6 +1432,163 @@ impl Register {
             replayed: false,
             body: response,
         })
+    }
+
+    /// Remove a resource for good (privacy, bewaartermijn): its state and index entries
+    /// go, and its events stay in the log only as a redacted shell (envelope without
+    /// data or actor), so sequence numbers and cursors keep working. With `cascade`,
+    /// what refers to it (references in the profiles) goes too, up to three levels.
+    /// Admin only. Returns the purged subjects.
+    pub async fn purge(
+        &self,
+        actor: &Actor,
+        subject: &str,
+        cascade: bool,
+    ) -> Result<Vec<String>, RegisterError> {
+        if !actor.admin {
+            return Err(RegisterError::Forbidden);
+        }
+        let _guard = self.write_lock.lock().await;
+        if self.load_record(subject)?.is_none() {
+            return Err(RegisterError::NotFound);
+        }
+        let mut todo = vec![(subject.to_string(), 0usize)];
+        let mut done: Vec<String> = Vec::new();
+        while let Some((s, depth)) = todo.pop() {
+            if done.contains(&s) {
+                continue;
+            }
+            if cascade && depth < 3 {
+                for r in self.referrers(&s)? {
+                    todo.push((r, depth + 1));
+                }
+            }
+            self.purge_one(&s)?;
+            done.push(s);
+        }
+        Ok(done)
+    }
+
+    /// Resources whose reference field holds `subject`, from the indexes.
+    fn referrers(&self, subject: &str) -> Result<Vec<String>, RegisterError> {
+        let refs: Vec<(String, String)> = {
+            let ps = self.profiles.read().unwrap();
+            ps.by_id
+                .values()
+                .flat_map(|p| {
+                    p.types.iter().flat_map(|(name, t)| {
+                        t.references.iter().map(move |r| (name.clone(), r.clone()))
+                    })
+                })
+                .collect()
+        };
+        let mut out = Vec::new();
+        for (type_name, field) in refs {
+            let prefix = k_idx_value(&type_name, &field, &Value::from(subject).to_string());
+            for (k, _) in self.kv.range(&prefix, &prefix_end(&prefix), usize::MAX)? {
+                out.push(String::from_utf8_lossy(&k[prefix.len()..]).to_string());
+            }
+        }
+        Ok(out)
+    }
+
+    fn purge_one(&self, subject: &str) -> Result<(), RegisterError> {
+        let Some(record) = self.load_record(subject)? else {
+            return Ok(());
+        };
+        let mut ops = Vec::new();
+        let prefix = k_subjlog_prefix(subject);
+        let redacted = now();
+        for (k, _) in self.kv.range(&prefix, &prefix_end(&prefix), usize::MAX)? {
+            let seq: u64 = String::from_utf8_lossy(&k[prefix.len()..])
+                .parse()
+                .unwrap_or(0);
+            if let Some(e) = self.read_event(seq)? {
+                let source = e["source"].as_str().unwrap_or("");
+                let tx = e["transactionid"]
+                    .as_str()
+                    .or(e["id"].as_str())
+                    .unwrap_or("");
+                ops.push(Op::Delete(k_idem(source, tx)));
+                let mut shell = json!({ "redacted": redacted });
+                for f in [
+                    "specversion",
+                    "id",
+                    "source",
+                    "type",
+                    "subject",
+                    "time",
+                    "sequence",
+                    "sequencetype",
+                    "transactionid",
+                ] {
+                    if let Some(v) = e.get(f) {
+                        shell[f] = v.clone();
+                    }
+                }
+                ops.push(Op::Put(k_log(seq), shell.to_string().into_bytes()));
+            }
+            ops.push(Op::Delete(k));
+        }
+        {
+            let ps = self.profiles.read().unwrap();
+            if let Some((p, n)) = ps.subject_type(&record.type_name) {
+                ops.extend(index_keys(&p.types[n], &record).into_iter().map(Op::Delete));
+            }
+        }
+        ops.push(Op::Delete(k_type_index(&record.type_name, subject)));
+        ops.push(Op::Delete(k_state(subject)));
+        self.kv.apply_batch(ops)?;
+        Ok(())
+    }
+
+    /// Purge everything past its bewaartermijn at `at`, with cascade. Returns the
+    /// purged subjects.
+    pub async fn sweep(&self, at: DateTime<Utc>) -> Result<Vec<String>, RegisterError> {
+        let system = Actor {
+            id: "urn:openevents:retention".into(),
+            claims: json!({}),
+            admin: true,
+        };
+        let mut out = Vec::new();
+        for s in self.expired(at)? {
+            match self.purge(&system, &s, true).await {
+                Ok(list) => out.extend(list),
+                Err(RegisterError::NotFound) => {} // already gone through a cascade
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(out)
+    }
+
+    /// Resources past their bewaartermijn (`retention` in the profile) at `at`.
+    pub fn expired(&self, at: DateTime<Utc>) -> Result<Vec<String>, RegisterError> {
+        let types: Vec<(String, Arc<Profile>)> = {
+            let ps = self.profiles.read().unwrap();
+            ps.by_id
+                .values()
+                .flat_map(|p| {
+                    p.types
+                        .iter()
+                        .filter(|(_, t)| t.retention.is_some())
+                        .map(move |(n, _)| (n.clone(), p.clone()))
+                })
+                .collect()
+        };
+        let mut out = Vec::new();
+        for (name, p) in types {
+            let ret = p.types[&name].retention.as_ref().unwrap();
+            let tp = k_type_prefix(&name);
+            for (k, _) in self.kv.range(&tp, &prefix_end(&tp), usize::MAX)? {
+                let subject = String::from_utf8_lossy(&k[tp.len()..]).to_string();
+                if let Some(r) = self.load_record(&subject)? {
+                    if ret.expires(&r.state).is_some_and(|t| t <= at) {
+                        out.push(subject);
+                    }
+                }
+            }
+        }
+        Ok(out)
     }
 
     fn current(

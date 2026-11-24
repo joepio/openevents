@@ -31,7 +31,7 @@ Tijdens het fieldlab MijnGesprekken (10 november 2026) bleek er belangstelling v
 - [Architectuur](docs/architectuur.md): log, stand, indexen, API
 - [Query-engine](docs/query.md): taal, paden, representaties, live
 - [Autorisatie](docs/autorisatie.md): autorisatie als query, regels in het profiel, velden per rol
-- [Wissen en bewaren](docs/wissen.md): AVG, Archiefwet, crypto-shredding
+- [Wissen en bewaren](docs/wissen.md): definitief verwijderen, bewaartermijnen, BSN-pseudoniemen
 - [Profielen](docs/profielen.md): hoe een domein erop landt, met Gesprekken als eerste
 - [Modules](docs/modules.md): domeinlogica als kleine open modules, met bezwaar als voorbeeld
 - [MijnOverheid-demo op OpenEvents](docs/mijnoverheid.md): MijnZaken en MijnTaken als leesweergave, live, en een portaal op `/mijnoverheid` dat alleen events kent
@@ -116,5 +116,6 @@ curl -s localhost:8080/query -H "$T" -H 'content-type: application/json' \
 - batch-ontvangst (`application/cloudevents-batch+json`) en een OpenAPI per profiel (`/profiles/{id}/openapi.json`)
 - `POST /notificaties`: ZGW-notificaties worden events, met een zaakspiegel als voorbeeldprofiel
 - `POST /query` met filter, `fields`, paginering, `feedCursor` en `mine` (wat over de aanroeper gaat, volgens de `mine`-regel in het profiel; ook als attribuut op de eventstroom); met veldindexen voor `=` en `IN` op de queryable velden, de verwijzingen en de velden van de `mine`-regel (andere filters scannen het type), nog zonder paden over verwijzingen en zonder `include`
+- privacy: `DELETE /subjects/{subject}` (met `cascade`), bewaartermijnen per type (`retention`), BSN als pseudoniem (`OPENEVENTS_PSEUDONYM_KEY`)
 
-Nog niet: paden over verwijzingen, indexen, views, wissen, OIDC met JWKS, modules.
+Nog niet: paden over verwijzingen, `include`, views, crypto-shredding voor backups, modules.

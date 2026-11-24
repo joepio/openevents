@@ -105,12 +105,19 @@ impl Retention {
         if !num.is_empty() || (months == 0 && days == 0 && seconds == 0) {
             return None;
         }
-        Some(Retention { from: from.to_string(), months, days, seconds })
+        Some(Retention {
+            from: from.to_string(),
+            months,
+            days,
+            seconds,
+        })
     }
 
     /// When a resource with this state expires, if its `from` field holds a moment.
     pub fn expires(&self, state: &Value) -> Option<chrono::DateTime<chrono::Utc>> {
-        let v = state.pointer(&format!("/{}", self.from.replace('.', "/")))?.as_str()?;
+        let v = state
+            .pointer(&format!("/{}", self.from.replace('.', "/")))?
+            .as_str()?;
         let start = chrono::DateTime::parse_from_rfc3339(v)
             .map(|d| d.with_timezone(&chrono::Utc))
             .ok()
@@ -119,8 +126,11 @@ impl Retention {
                     .ok()
                     .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc())
             })?;
-        start.checked_add_months(chrono::Months::new(self.months))?
-            .checked_add_signed(chrono::Duration::days(self.days) + chrono::Duration::seconds(self.seconds))
+        start
+            .checked_add_months(chrono::Months::new(self.months))?
+            .checked_add_signed(
+                chrono::Duration::days(self.days) + chrono::Duration::seconds(self.seconds),
+            )
     }
 }
 
@@ -516,7 +526,9 @@ mod tests {
         assert!(Retention::parse("eind", "1Y").is_none());
         assert!(Retention::parse("eind", "P").is_none());
         let r = Retention::parse("eind", "P30D").unwrap();
-        let e = r.expires(&serde_json::json!({ "eind": "2026-01-01T10:00:00Z" })).unwrap();
+        let e = r
+            .expires(&serde_json::json!({ "eind": "2026-01-01T10:00:00Z" }))
+            .unwrap();
         assert_eq!(e.to_rfc3339(), "2026-01-31T10:00:00+00:00");
         assert!(r.expires(&serde_json::json!({ "eind": null })).is_none());
     }

@@ -92,6 +92,23 @@ async fn main() {
             });
         }
     }
+    {
+        // Bewaartermijnen (`retention` in the profiles): purge what expired, hourly.
+        let register = register.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(3600));
+            loop {
+                tick.tick().await;
+                match register.sweep(chrono::Utc::now()).await {
+                    Ok(p) if !p.is_empty() => {
+                        tracing::info!("retention: purged {} resources", p.len())
+                    }
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("retention sweep: {e}"),
+                }
+            }
+        });
+    }
     let state = AppState {
         register,
         auth,

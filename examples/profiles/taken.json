@@ -90,6 +90,7 @@
           }
         }
       },
+      "retention": { "from": "afgerond.tijd", "keep": "P1Y" },
       "rules": {
         "read": "voor.partij = actor() OR team = actor('team') OR actor('rol') IN ('kcc', 'systeem')",
         "create": "team = actor('team') OR actor('rol') = 'systeem'",

@@ -45,7 +45,10 @@ pub fn router(state: AppState) -> Router {
         .route("/events", get(get_events).post(post_events))
         .route("/events/tickets", post(post_ticket))
         .route("/notificaties", post(post_notificatie))
-        .route("/subjects/{subject}", get(get_subject))
+        .route(
+            "/subjects/{subject}",
+            get(get_subject).delete(delete_subject),
+        )
         .route("/subjects/{subject}/events", get(get_timeline))
         .route("/subjects/{subject}/related", get(get_related))
         .route("/subjects/{subject}/audit", get(get_audit))
@@ -438,6 +441,32 @@ async fn get_subject(
     };
     match state.register.get_subject(&actor, &subject) {
         Ok(v) => Json(v).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct PurgeParams {
+    #[serde(default)]
+    cascade: bool,
+}
+
+/// Remove a resource for good (admin): state, indexes and the data in its events.
+async fn delete_subject(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(subject): Path<String>,
+    Query(p): Query<PurgeParams>,
+) -> Response {
+    let actor = match actor(&state, &headers).await {
+        Ok(a) => a,
+        Err(r) => return r,
+    };
+    match state.register.purge(&actor, &subject, p.cascade).await {
+        Ok(purged) => {
+            tracing::info!("purged by {}: {}", actor.id, purged.join(", "));
+            Json(json!({ "purged": purged })).into_response()
+        }
         Err(e) => error_response(e),
     }
 }

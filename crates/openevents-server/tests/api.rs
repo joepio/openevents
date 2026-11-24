@@ -1496,3 +1496,95 @@ async fn indexes_follow_changes() {
     .await;
     assert_eq!(count(&b), 1, "{b}");
 }
+
+#[tokio::test]
+async fn purge_removes_a_resource_and_what_refers_to_it() {
+    let app = app();
+    install(&app).await;
+    start_gesprek(&app).await;
+    let (s, b, _) = call(
+        &app,
+        "POST",
+        "/events",
+        Some(SUZANNE),
+        Some(bijdrage(
+            "b1",
+            "urn:uuid:bijdrage-1",
+            json!("Mijn adres is Dorpsstraat 1"),
+        )),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let uri = format!("/subjects/{}?cascade=true", enc(G1));
+    let (s, _, _) = call(&app, "DELETE", &uri, Some(SUZANNE), None).await;
+    assert_eq!(s, StatusCode::FORBIDDEN, "only an admin may purge");
+    let (s, b, _) = call(&app, "DELETE", &uri, Some(ADMIN), None).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(b["purged"].as_array().unwrap().len(), 2, "{b}");
+    for subject in [G1, "urn:uuid:bijdrage-1"] {
+        let (s, _, _) = call(
+            &app,
+            "GET",
+            &format!("/subjects/{}", enc(subject)),
+            Some(ADMIN),
+            None,
+        )
+        .await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+    }
+    let (_, b, _) = call(&app, "GET", "/events", Some(ADMIN), None).await;
+    let text = b.to_string();
+    assert!(
+        !text.contains("Dorpsstraat"),
+        "no data left in the log: {text}"
+    );
+    assert!(!text.contains("Vraag over mijn aanvraag"), "{text}");
+    assert!(text.contains("redacted"), "the log keeps a shell: {text}");
+    let (_, b, _) = call(&app, "GET", "/events", Some(SUZANNE), None).await;
+    assert_eq!(b["events"].as_array().map(|a| a.len()), Some(0), "{b}");
+    let (_, b, _) = call(
+        &app,
+        "POST",
+        "/query",
+        Some(SUZANNE),
+        Some(json!({ "mine": true })),
+    )
+    .await;
+    assert_eq!(b["results"].as_array().unwrap().len(), 0, "{b}");
+    // The same CloudEvent id may be used again: idempotency records are gone too.
+    start_gesprek(&app).await;
+}
+
+#[tokio::test]
+async fn retention_purges_closed_gesprekken_after_a_year() {
+    let kv: Arc<dyn KvStore> = Arc::new(MemoryStore::new());
+    let app = app_with(kv.clone());
+    install(&app).await;
+    start_gesprek(&app).await;
+    let reg = Register::open(kv.clone()).unwrap();
+    let later = chrono::Utc::now() + chrono::Duration::days(800);
+    assert!(
+        reg.sweep(later).await.unwrap().is_empty(),
+        "an open gesprek stays"
+    );
+    let (s, b, _) = call(
+        &app,
+        "POST",
+        "/events",
+        Some(SUZANNE),
+        Some(ev(
+            "e9",
+            "nl.vng.gesprekken.gesprek.afgesloten",
+            G1,
+            json!({ "patch": { "afsluitreden": "beantwoord" } }),
+        )),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let reg = Register::open(kv).unwrap();
+    assert!(
+        reg.sweep(chrono::Utc::now()).await.unwrap().is_empty(),
+        "not yet"
+    );
+    assert_eq!(reg.sweep(later).await.unwrap(), vec![G1.to_string()]);
+}
